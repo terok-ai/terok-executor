@@ -7,30 +7,16 @@ Builds agent images, launches instrumented containers, and manages the
 lifecycle of one AI coding agent at a time.  Designed for standalone use
 (``terok-agent run claude .``) and as a library for terok orchestration.
 
-Public API re-exports from instrumentation modules::
+Public API::
 
-    # Provider registry & types
-    from terok_agent import (
-        HEADLESS_PROVIDERS,
-        PROVIDER_NAMES,
-        HeadlessProvider,
-        get_provider,
-        CLIOverrides,
-        ProviderConfig,
-        WrapperConfig,
-        OpenCodeProviderConfig,
-        apply_provider_config,
-        build_headless_command,
-        collect_opencode_provider_env,
-        collect_all_auto_approve_env,
-    )
+    # Provider registry
+    from terok_agent import HEADLESS_PROVIDERS, HeadlessProvider, get_provider
+    from terok_agent import PROVIDER_NAMES, CLIOverrides
+    from terok_agent import apply_provider_config, build_headless_command
+    from terok_agent import collect_opencode_provider_env, collect_all_auto_approve_env
 
     # Agent config preparation
-    from terok_agent import (
-        AgentConfigSpec,
-        prepare_agent_config_dir,
-        parse_md_agent,
-    )
+    from terok_agent import AgentConfigSpec, prepare_agent_config_dir, parse_md_agent
 
     # Auth
     from terok_agent import AUTH_PROVIDERS, AuthProvider, authenticate
@@ -38,18 +24,16 @@ Public API re-exports from instrumentation modules::
     # Instructions
     from terok_agent import resolve_instructions, bundled_default_instructions
 
-    # Config stack & resolution
-    from terok_agent import (
-        ConfigStack,
-        ConfigScope,
-        resolve_provider_value,
-        deep_merge,
-        load_yaml_scope,
-        load_json_scope,
-    )
+    # Config stack
+    from terok_agent import ConfigStack, ConfigScope, resolve_provider_value
 
-    # Podman utilities
-    from terok_agent import podman_userns_args
+Internal symbols (available via submodule import for white-box tests)::
+
+    from terok_agent.headless_providers import generate_agent_wrapper, generate_all_wrappers
+    from terok_agent.headless_providers import OpenCodeProviderConfig, ProviderConfig, WrapperConfig
+    from terok_agent.config_stack import deep_merge, load_yaml_scope, load_json_scope
+    from terok_agent.instructions import has_custom_instructions
+    from terok_agent._util import podman_userns_args
 """
 
 __version__: str = "0.0.0"  # placeholder; replaced at build time
@@ -61,9 +45,6 @@ try:
 except PackageNotFoundError:
     pass  # editable install or running from source without metadata
 
-# -- Podman utilities ----------------------------------------------------------
-from ._util import podman_userns_args
-
 # -- Config resolution ---------------------------------------------------------
 from .agent_config import resolve_provider_value
 
@@ -74,17 +55,14 @@ from .agents import AgentConfigSpec, parse_md_agent, prepare_agent_config_dir
 from .auth import AUTH_PROVIDERS, AuthProvider, authenticate
 
 # -- Config stack --------------------------------------------------------------
-from .config_stack import ConfigScope, ConfigStack, deep_merge, load_json_scope, load_yaml_scope
+from .config_stack import ConfigScope, ConfigStack
 
-# -- Provider registry & types ------------------------------------------------
+# -- Provider registry ---------------------------------------------------------
 from .headless_providers import (
     HEADLESS_PROVIDERS,
     PROVIDER_NAMES,
     CLIOverrides,
     HeadlessProvider,
-    OpenCodeProviderConfig,
-    ProviderConfig,
-    WrapperConfig,
     apply_provider_config,
     build_headless_command,
     collect_all_auto_approve_env,
@@ -97,15 +75,12 @@ from .instructions import bundled_default_instructions, resolve_instructions
 
 __all__ = [
     "__version__",
-    # Provider registry & types
+    # Provider registry
     "HEADLESS_PROVIDERS",
     "PROVIDER_NAMES",
     "HeadlessProvider",
-    "OpenCodeProviderConfig",
     "get_provider",
     "CLIOverrides",
-    "ProviderConfig",
-    "WrapperConfig",
     "apply_provider_config",
     "build_headless_command",
     "collect_opencode_provider_env",
@@ -121,13 +96,8 @@ __all__ = [
     # Instructions
     "bundled_default_instructions",
     "resolve_instructions",
-    # Config stack & resolution
+    # Config stack
     "ConfigScope",
     "ConfigStack",
     "resolve_provider_value",
-    "deep_merge",
-    "load_yaml_scope",
-    "load_json_scope",
-    # Podman utilities
-    "podman_userns_args",
 ]
