@@ -3,8 +3,7 @@
 
 """Generic layered config resolution.
 
-Domain-agnostic: no terok service dependencies.  Could be extracted to a
-standalone package or replaced by omegaconf / dynaconf later.
+Domain-agnostic: no terok service dependencies.
 
 Terminology
 -----------
