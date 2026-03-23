@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: agent
+label: Codex
+binary: codex
+tier: 2
+
+git_identity:
+  name: Codex
+  email: noreply@openai.com
+
+headless:
+  subcommand: exec
+  prompt_flag: ""
+  model_flag: "--model"
+
+auto_approve:
+  flags: ["--yolo"]
+
+session:
+  supports_resume: false
+
+capabilities:
+  log_format: plain
+
+auth:
+  host_dir: _codex-config
+  container_mount: /home/dev/.codex
+  command: ["setup-codex-auth.sh"]
+  banner_hint: |-
+    This will set up port forwarding (using socat) and open a browser for authentication.
+    After completing authentication, press Ctrl+C to stop the container.
+  extra_run_args: ["-p", "127.0.0.1:1455:1455"]

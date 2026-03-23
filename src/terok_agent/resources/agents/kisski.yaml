@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: agent
+label: KISSKI
+binary: kisski
+tier: 2
+
+git_identity:
+  name: KISSKI
+  email: noreply@academiccloud.de
+
+headless:
+  subcommand: run
+  prompt_flag: ""
+
+auto_approve:
+  env:
+    OPENCODE_PERMISSION: '{"*":"allow"}'
+
+session:
+  supports_resume: true
+  resume_flag: "--session"
+  continue_flag: "--continue"
+  session_file: kisski-session.txt
+
+capabilities:
+  log_format: plain
+
+opencode:
+  display_name: KISSKI
+  base_url: https://chat-ai.academiccloud.de/v1
+  preferred_model: devstral-2-123b-instruct-2512
+  fallback_model: mistral-large-3-675b-instruct-2512
+  env_var_prefix: KISSKI
+  config_dir: .kisski
+  auth_key_url: https://chat-ai.academiccloud.de/

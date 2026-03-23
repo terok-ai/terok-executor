@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: agent
+label: OpenCode
+binary: opencode
+tier: 2
+
+git_identity:
+  name: OpenCode
+  email: noreply@opencode.ai
+
+headless:
+  subcommand: run
+  prompt_flag: ""
+  model_flag: "--model"
+
+auto_approve:
+  env:
+    OPENCODE_PERMISSION: '{"*":"allow"}'
+
+session:
+  supports_resume: true
+  resume_flag: "--session"
+  continue_flag: "--continue"
+  session_file: opencode-session.txt
+
+capabilities:
+  log_format: plain
