@@ -231,6 +231,7 @@ class TestLoadRegistry:
         assert "_claude-config" in mount_dirs
         assert "_codex-config" in mount_dirs
         assert "_gh-config" in mount_dirs
+        assert "_glab-config" in mount_dirs
 
     def test_mounts_include_extra_dirs(self) -> None:
         reg = load_registry()
