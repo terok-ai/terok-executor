@@ -129,6 +129,7 @@ def _handle_run(
             timeout=timeout,
             gate=effective_gate,
             name=name,
+            follow=True,
         )
     else:
         raise SystemExit(

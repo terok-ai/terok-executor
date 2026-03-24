@@ -119,8 +119,6 @@ class AgentRunner:
 
     def _base_env(self, task_id: str, provider_name: str) -> dict[str, str]:
         """Assemble the base environment variables for a container."""
-        from .headless_providers import HEADLESS_PROVIDERS
-
         env: dict[str, str] = {
             "TASK_ID": task_id,
             "REPO_ROOT": "/workspace",
@@ -130,8 +128,8 @@ class AgentRunner:
         # OpenCode provider env vars (TEROK_OC_* for Blablador, KISSKI, etc.)
         env.update(self.registry.collect_opencode_provider_env())
 
-        # Git identity — use the agent's configured identity
-        provider = HEADLESS_PROVIDERS.get(provider_name)
+        # Git identity — use the agent's configured identity from registry
+        provider = self.registry.providers.get(provider_name)
         if provider:
             env["GIT_AUTHOR_NAME"] = provider.git_author_name
             env["GIT_AUTHOR_EMAIL"] = provider.git_author_email
@@ -149,12 +147,19 @@ class AgentRunner:
         prompt: str | None = None,
         instructions: str | None = None,
         envs_dir: Path,
+        project_root: Path | None = None,
     ) -> Path:
-        """Prepare the agent-config directory for a task."""
+        """Prepare the agent-config directory for a task.
+
+        *project_root* is passed to :func:`resolve_instructions` so that
+        ``<repo>/instructions.md`` is appended when present.
+        """
         from .agents import AgentConfigSpec, prepare_agent_config_dir
         from .instructions import resolve_instructions
 
-        resolved_instructions = instructions or resolve_instructions({}, provider)
+        resolved_instructions = instructions or resolve_instructions(
+            {}, provider, project_root=project_root
+        )
 
         spec = AgentConfigSpec(
             tasks_root=task_dir.parent,
@@ -225,12 +230,13 @@ class AgentRunner:
         timeout: int = 1800,
         gate: bool = True,
         name: str | None = None,
-        follow: bool = True,
+        follow: bool = False,
     ) -> str:
         """Launch a headless agent run. Returns container name.
 
         The agent executes the *prompt* against *repo* (local path or git URL)
-        and exits when done or when *timeout* is reached.
+        and exits when done or when *timeout* is reached.  Set *follow=True*
+        to block until the agent finishes (the CLI does this by default).
         """
         return self._run(
             provider=provider,
@@ -308,9 +314,9 @@ class AgentRunner:
         public_url: str | None = None,
     ) -> str:
         """Unified launch flow for all three modes."""
-        from .headless_providers import build_headless_command, get_provider
+        from .headless_providers import build_headless_command
 
-        agent = get_provider(provider)
+        agent = self.registry.get_provider(provider)
         task_id = _generate_task_id()
         code_repo, local_path = _resolve_repo(repo)
 
@@ -323,13 +329,14 @@ class AgentRunner:
         # Env base for shared auth mounts
         envs_dir = self.sandbox.config.effective_envs_dir
 
-        # Prepare agent config
+        # Prepare agent config (pass local_path so repo instructions.md is found)
         agent_config_dir = self._prepare_agent_config(
             task_dir,
             task_id,
             provider,
             prompt=prompt,
             envs_dir=envs_dir,
+            project_root=local_path,
         )
 
         # Assemble environment
