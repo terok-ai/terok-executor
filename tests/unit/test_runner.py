@@ -155,7 +155,7 @@ class TestGateIntegration:
         sandbox.create_token.assert_called_once()
         assert url == "http://tok123@host:9418/repo"
 
-    def test_gate_true_with_git_url_uses_gate(self, tmp_path: Path) -> None:
+    def test_gate_true_with_git_url_uses_gate(self) -> None:
         sandbox = _mock_sandbox()
         runner = AgentRunner(sandbox=sandbox)
 
@@ -182,7 +182,7 @@ class TestGateIntegration:
         cmd = mock_run.call_args[0][0]
         assert any("CODE_REPO=http://tok@host:9418/repo" in arg for arg in cmd)
 
-    def test_gate_false_skips_gate(self, tmp_path: Path) -> None:
+    def test_gate_false_skips_gate(self) -> None:
         sandbox = _mock_sandbox()
         runner = AgentRunner(sandbox=sandbox)
 
