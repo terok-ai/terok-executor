@@ -43,13 +43,16 @@ def _cmd_agents(args: argparse.Namespace) -> None:
 
 def _cmd_build(args: argparse.Namespace) -> None:
     """Build L0+L1 container images."""
-    from .build import build_base_images
+    from .build import BuildError, build_base_images
 
-    images = build_base_images(
-        args.base,
-        rebuild=args.rebuild,
-        full_rebuild=args.full_rebuild,
-    )
+    try:
+        images = build_base_images(
+            args.base,
+            rebuild=args.rebuild,
+            full_rebuild=args.full_rebuild,
+        )
+    except BuildError as e:
+        raise SystemExit(str(e)) from e
     print(f"\nL0: {images.l0}")
     print(f"L1: {images.l1}")
 

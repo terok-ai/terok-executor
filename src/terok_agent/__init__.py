@@ -56,6 +56,8 @@ from .auth import AUTH_PROVIDERS, AuthProvider, authenticate
 
 # -- Build: image construction + resource staging ------------------------------
 from .build import (
+    DEFAULT_BASE_IMAGE,
+    BuildError,
     ImageSet,
     build_base_images,
     l0_image_tag,
@@ -133,6 +135,8 @@ __all__ = [
     "ConfigStack",
     "resolve_provider_value",
     # Build: image construction + resource staging
+    "DEFAULT_BASE_IMAGE",
+    "BuildError",
     "ImageSet",
     "build_base_images",
     "l0_image_tag",

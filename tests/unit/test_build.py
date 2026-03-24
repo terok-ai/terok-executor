@@ -7,9 +7,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from terok_agent.build import (
+    BuildError,
     ImageSet,
     _base_tag,
+    _normalize_base_image,
     l0_image_tag,
     l1_image_tag,
     prepare_build_context,
@@ -34,6 +38,9 @@ class TestImageNaming:
     def test_empty_falls_back(self) -> None:
         assert _base_tag("") == "ubuntu-24.04"
 
+    def test_whitespace_falls_back(self) -> None:
+        assert _base_tag("   ") == "ubuntu-24.04"
+
     def test_nvidia_cuda(self) -> None:
         tag = _base_tag("nvidia/cuda:12.4.1-devel-ubuntu24.04")
         assert tag == "nvidia-cuda-12.4.1-devel-ubuntu24.04"
@@ -53,6 +60,50 @@ class TestImageNaming:
         s = ImageSet(l0="terok-l0:test", l1="terok-l1-cli:test")
         assert s.l0 == "terok-l0:test"
         assert s.l1 == "terok-l1-cli:test"
+
+
+class TestNormalization:
+    """Verify base image normalization."""
+
+    def test_strips_whitespace(self) -> None:
+        assert _normalize_base_image("  ubuntu:24.04  ") == "ubuntu:24.04"
+
+    def test_empty_to_default(self) -> None:
+        assert _normalize_base_image("") == "ubuntu:24.04"
+
+    def test_none_to_default(self) -> None:
+        assert _normalize_base_image(None) == "ubuntu:24.04"
+
+    def test_passthrough(self) -> None:
+        assert _normalize_base_image("nvidia/cuda:12.4") == "nvidia/cuda:12.4"
+
+
+class TestBuildError:
+    """Verify BuildError is a proper exception."""
+
+    def test_is_runtime_error(self) -> None:
+        assert issubclass(BuildError, RuntimeError)
+
+    def test_message(self) -> None:
+        err = BuildError("podman not found")
+        assert "podman" in str(err)
+
+
+class TestBuildDirGuard:
+    """Verify build_dir safety checks."""
+
+    def test_rejects_nonempty_dir(self, tmp_path: Path) -> None:
+        (tmp_path / "existing-file.txt").write_text("data")
+        from unittest.mock import patch
+
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=False),
+        ):
+            with pytest.raises(ValueError, match="must be empty"):
+                from terok_agent.build import build_base_images
+
+                build_base_images(build_dir=tmp_path)
 
 
 # ---------------------------------------------------------------------------
