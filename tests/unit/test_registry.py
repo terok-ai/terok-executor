@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from terok_agent.auth import AuthProvider
-from terok_agent.headless_providers import HeadlessProvider, OpenCodeProviderConfig
+from terok_agent.headless_providers import HeadlessProvider
 from terok_agent.registry import (
     _load_bundled_agents,
     _to_auth_provider,
@@ -120,7 +120,6 @@ class TestDeserializeProvider:
         p = _to_headless_provider("blablador", agents["blablador"])
 
         assert p.opencode_config is not None
-        assert isinstance(p.opencode_config, OpenCodeProviderConfig)
         assert p.opencode_config.display_name == "Helmholtz Blablador"
         assert p.opencode_config.env_var_prefix == "BLABLADOR"
         assert p.opencode_config.config_dir == ".blablador"
@@ -321,108 +320,60 @@ class TestUserOverrides:
 
 
 # ---------------------------------------------------------------------------
-# Parity with hardcoded registry
+# Behavioral validation — registry produces usable dataclasses
 # ---------------------------------------------------------------------------
 
 
-class TestParityWithHardcoded:
-    """Verify YAML registry produces identical data to the hardcoded Python dicts."""
+class TestRegistryBehavior:
+    """Verify the registry produces well-formed, usable provider dataclasses."""
 
-    def test_provider_count_matches(self) -> None:
-        from terok_agent.headless_providers import HEADLESS_PROVIDERS
-
+    def test_every_agent_has_valid_headless_provider(self) -> None:
+        """Each agent deserializes into a HeadlessProvider with required fields."""
         reg = load_registry()
-        assert set(reg.providers.keys()) == set(HEADLESS_PROVIDERS.keys())
+        for name in reg.agent_names:
+            p = reg.get_provider(name)
+            assert isinstance(p, HeadlessProvider)
+            assert p.name == name
+            assert p.binary  # non-empty binary
+            assert p.label  # non-empty label
+            assert p.git_author_name
+            assert p.git_author_email
+            assert p.log_format in {"plain", "claude-stream-json"}
 
-    def test_claude_fields_match(self) -> None:
-        from terok_agent.headless_providers import HEADLESS_PROVIDERS
-
-        hardcoded = HEADLESS_PROVIDERS["claude"]
+    def test_every_auth_provider_has_valid_command(self) -> None:
+        """Each auth provider has a non-empty command and mount paths."""
         reg = load_registry()
-        from_yaml = reg.get_provider("claude")
+        for name, ap in reg.auth_providers.items():
+            assert isinstance(ap, AuthProvider)
+            assert ap.command, f"{name}: empty auth command"
+            assert ap.host_dir_name, f"{name}: empty host_dir"
+            assert ap.container_mount, f"{name}: empty container_mount"
 
-        # Compare all fields
-        for field_name in [
-            "name",
-            "label",
-            "binary",
-            "git_author_name",
-            "git_author_email",
-            "headless_subcommand",
-            "prompt_flag",
-            "auto_approve_env",
-            "auto_approve_flags",
-            "output_format_flags",
-            "model_flag",
-            "max_turns_flag",
-            "verbose_flag",
-            "supports_session_resume",
-            "resume_flag",
-            "continue_flag",
-            "session_file",
-            "supports_agents_json",
-            "supports_session_hook",
-            "supports_add_dir",
-            "log_format",
-        ]:
-            assert getattr(from_yaml, field_name) == getattr(hardcoded, field_name), (
-                f"claude.{field_name}: YAML={getattr(from_yaml, field_name)!r} "
-                f"!= hardcoded={getattr(hardcoded, field_name)!r}"
-            )
-
-    def test_all_providers_match_hardcoded(self) -> None:
-        from terok_agent.headless_providers import HEADLESS_PROVIDERS
-
+    def test_opencode_providers_have_complete_config(self) -> None:
+        """Providers with opencode config have all required fields populated."""
         reg = load_registry()
-        for name, hardcoded in HEADLESS_PROVIDERS.items():
-            from_yaml = reg.providers[name]
-            for field_name in [
-                "name",
-                "label",
-                "binary",
-                "git_author_name",
-                "git_author_email",
-                "headless_subcommand",
-                "prompt_flag",
-                "auto_approve_env",
-                "auto_approve_flags",
-                "output_format_flags",
-                "model_flag",
-                "max_turns_flag",
-                "verbose_flag",
-                "supports_session_resume",
-                "resume_flag",
-                "continue_flag",
-                "session_file",
-                "supports_agents_json",
-                "supports_session_hook",
-                "supports_add_dir",
-                "log_format",
-            ]:
-                assert getattr(from_yaml, field_name) == getattr(hardcoded, field_name), (
-                    f"{name}.{field_name}: YAML={getattr(from_yaml, field_name)!r} "
-                    f"!= hardcoded={getattr(hardcoded, field_name)!r}"
-                )
+        for name, p in reg.providers.items():
+            if p.opencode_config is None:
+                continue
+            oc = p.opencode_config
+            assert oc.display_name, f"{name}: empty display_name"
+            assert oc.base_url.startswith("https://"), f"{name}: invalid base_url"
+            assert oc.preferred_model, f"{name}: empty preferred_model"
+            assert oc.fallback_model, f"{name}: empty fallback_model"
+            assert oc.env_var_prefix, f"{name}: empty env_var_prefix"
+            assert oc.config_dir, f"{name}: empty config_dir"
 
-    def test_opencode_configs_match(self) -> None:
-        from terok_agent.headless_providers import HEADLESS_PROVIDERS
-
+    def test_auto_approve_env_values_are_strings(self) -> None:
+        """Auto-approve env values must be strings (injected into container env)."""
         reg = load_registry()
-        for name, hardcoded in HEADLESS_PROVIDERS.items():
-            from_yaml = reg.providers[name]
-            if hardcoded.opencode_config is None:
-                assert from_yaml.opencode_config is None, f"{name}: expected no opencode_config"
-            else:
-                assert from_yaml.opencode_config is not None, f"{name}: expected opencode_config"
-                for field_name in [
-                    "display_name",
-                    "base_url",
-                    "preferred_model",
-                    "fallback_model",
-                    "env_var_prefix",
-                    "config_dir",
-                    "auth_key_url",
-                ]:
-                    assert getattr(from_yaml.opencode_config, field_name) == getattr(
-                        hardcoded.opencode_config, field_name
-                    ), f"{name}.opencode.{field_name} mismatch"
+        for name, p in reg.providers.items():
+            for k, v in p.auto_approve_env.items():
+                assert isinstance(k, str), f"{name}: env key {k!r} not str"
+                assert isinstance(v, str), f"{name}: env value {v!r} not str"
+
+    def test_session_resume_consistency(self) -> None:
+        """Providers with session resume must have a resume_flag."""
+        reg = load_registry()
+        for name, p in reg.providers.items():
+            if p.supports_session_resume:
+                assert p.resume_flag, f"{name}: supports_resume but no resume_flag"
