@@ -134,13 +134,17 @@ class AgentRunner:
         gate_base = cfg.gate_base_path
         gate_base.mkdir(parents=True, exist_ok=True)
 
-        # Derive a stable repo name from the URL for the bare mirror path
-        repo_name = repo_url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
-        gate_path = gate_base / repo_name
+        # Derive a collision-free repo key from the full URL
+        import hashlib
+
+        url_hash = hashlib.sha256(repo_url.encode()).hexdigest()[:12]
+        basename = repo_url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        repo_key = f"{basename}-{url_hash}"
+        gate_path = gate_base / repo_key
 
         # Sync (creates bare mirror if missing, fetches if exists)
         gate = GitGate(
-            project_id=repo_name,
+            project_id=repo_key,
             gate_path=gate_path,
             upstream_url=repo_url,
             envs_base_dir=cfg.effective_envs_dir,
@@ -149,7 +153,7 @@ class AgentRunner:
 
         # Ensure gate server is running, create token, build URL
         self.sandbox.ensure_gate()
-        token = self.sandbox.create_token(repo_name, task_id)
+        token = self.sandbox.create_token(repo_key, task_id)
         return self.sandbox.gate_url(gate_path, token)
 
     def _base_env(self, task_id: str, provider_name: str) -> dict[str, str]:
@@ -245,7 +249,15 @@ class AgentRunner:
         cmd += ["--name", cname, "-w", "/workspace", image]
         cmd += command
 
-        print("$", shlex.join(cmd))
+        # Redact env values that may contain gate tokens
+        _REDACT_PREFIXES = ("CODE_REPO=", "CLONE_FROM=")
+        display_cmd = [
+            arg.split("=", 1)[0] + "=<redacted>"
+            if any(arg.startswith(p) for p in _REDACT_PREFIXES)
+            else arg
+            for arg in cmd
+        ]
+        print("$", shlex.join(display_cmd))
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:

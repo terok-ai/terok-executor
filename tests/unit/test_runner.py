@@ -164,7 +164,7 @@ class TestGateIntegration:
             patch.object(
                 runner, "_setup_gate", return_value="http://tok@host:9418/repo"
             ) as mock_gate,
-            patch("subprocess.run"),
+            patch("subprocess.run") as mock_run,
         ):
             runner.run_headless(
                 "claude",
@@ -174,7 +174,13 @@ class TestGateIntegration:
                 follow=False,
             )
 
-        mock_gate.assert_called_once_with("git@github.com:user/repo.git", mock_gate.call_args[0][1])
+        # Verify _setup_gate was called with the repo URL
+        mock_gate.assert_called_once()
+        assert mock_gate.call_args[0][0] == "git@github.com:user/repo.git"
+
+        # Verify the gate URL ended up in the podman command as CODE_REPO
+        cmd = mock_run.call_args[0][0]
+        assert any("CODE_REPO=http://tok@host:9418/repo" in arg for arg in cmd)
 
     def test_gate_false_skips_gate(self, tmp_path: Path) -> None:
         sandbox = _mock_sandbox()
