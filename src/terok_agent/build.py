@@ -1,19 +1,71 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Build resource staging for container image construction.
+"""Container image building and build-context staging.
 
-Provides functions to stage bundled resources (scripts, toad agents, tmux
-config) from the terok-agent package into a Dockerfile build context
-directory.  Used by both ``terok-agent build`` (standalone) and terok's
-``docker.py`` (orchestrated).
+Owns the L0 (base dev) and L1 (agent CLI) Dockerfile templates, resource
+staging, image naming, and ``podman build`` invocation.  terok adds L2
+(project customisation) on top.
+
+Usage::
+
+    from terok_agent.build import build_base_images, ImageSet
+
+    images = build_base_images("ubuntu:24.04")
+    # images.l0 = "terok-l0:ubuntu-24-04"
+    # images.l1 = "terok-l1-cli:ubuntu-24-04"
 """
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
+import subprocess
+import time
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Image naming convention
+# ---------------------------------------------------------------------------
+
+
+def _base_tag(base_image: str) -> str:
+    """Derive a safe OCI tag fragment from an arbitrary base image string."""
+    raw = (base_image or "").strip() or "ubuntu-24.04"
+    tag = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip("-.").lower() or "ubuntu-24.04"
+    if len(tag) > 120:
+        digest = hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+        tag = f"{tag[:111]}-{digest}"
+    return tag
+
+
+def l0_image_tag(base_image: str) -> str:
+    """Return the L0 base dev image tag for *base_image*."""
+    return f"terok-l0:{_base_tag(base_image)}"
+
+
+def l1_image_tag(base_image: str) -> str:
+    """Return the L1 agent CLI image tag for *base_image*."""
+    return f"terok-l1-cli:{_base_tag(base_image)}"
+
+
+@dataclass(frozen=True)
+class ImageSet:
+    """L0 + L1 image tags produced by a build."""
+
+    l0: str
+    """L0 base dev image tag (e.g. ``terok-l0:ubuntu-24-04``)."""
+
+    l1: str
+    """L1 agent CLI image tag (e.g. ``terok-l1-cli:ubuntu-24-04``)."""
+
+
+# ---------------------------------------------------------------------------
+# Build-context resource staging
+# ---------------------------------------------------------------------------
 
 
 def _copy_package_tree(package: str, rel_path: str, dest: Path) -> None:
@@ -37,6 +89,15 @@ def _copy_package_tree(package: str, rel_path: str, dest: Path) -> None:
     _recurse(root, dest)
 
 
+def _clean_packaging_artifacts(dest: Path) -> None:
+    """Remove __pycache__ dirs and __init__.py from a staged directory."""
+    for unwanted in dest.rglob("__pycache__"):
+        shutil.rmtree(unwanted)
+    init = dest / "__init__.py"
+    if init.exists():
+        init.unlink()
+
+
 def stage_scripts(dest: Path) -> None:
     """Stage container helper scripts into *dest*.
 
@@ -47,12 +108,7 @@ def stage_scripts(dest: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     _copy_package_tree("terok_agent", "resources/scripts", dest)
-    # Clean out packaging artifacts that shouldn't enter the build context
-    for unwanted in dest.rglob("__pycache__"):
-        shutil.rmtree(unwanted)
-    init = dest / "__init__.py"
-    if init.exists():
-        init.unlink()
+    _clean_packaging_artifacts(dest)
 
 
 def stage_toad_agents(dest: Path) -> None:
@@ -64,9 +120,7 @@ def stage_toad_agents(dest: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     _copy_package_tree("terok_agent", "resources/toad-agents", dest)
-    init = dest / "__init__.py"
-    if init.exists():
-        init.unlink()
+    _clean_packaging_artifacts(dest)
 
 
 def stage_tmux_config(dest: Path) -> None:
@@ -78,6 +132,156 @@ def stage_tmux_config(dest: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     _copy_package_tree("terok_agent", "resources/tmux", dest)
-    init = dest / "__init__.py"
-    if init.exists():
-        init.unlink()
+    _clean_packaging_artifacts(dest)
+
+
+# ---------------------------------------------------------------------------
+# Dockerfile template rendering
+# ---------------------------------------------------------------------------
+
+
+def _render_template(template_name: str, variables: dict[str, str]) -> str:
+    """Render a Jinja2 Dockerfile template from package resources."""
+    from jinja2 import BaseLoader, Environment
+
+    raw = (resources.files("terok_agent") / "resources" / "templates" / template_name).read_text(
+        encoding="utf-8"
+    )
+    env = Environment(  # nosec B701 — Dockerfile output, not HTML
+        loader=BaseLoader(), keep_trailing_newline=True, autoescape=False
+    )
+    tmpl = env.from_string(raw)
+    return tmpl.render(**variables)
+
+
+def render_l0(base_image: str = "ubuntu:24.04") -> str:
+    """Render the L0 (base dev) Dockerfile."""
+    return _render_template(
+        "l0.dev.Dockerfile.template",
+        {"BASE_IMAGE": base_image},
+    )
+
+
+def render_l1(l0_image: str, *, cache_bust: str = "0") -> str:
+    """Render the L1 (agent CLI) Dockerfile."""
+    return _render_template(
+        "l1.agent-cli.Dockerfile.template",
+        {"BASE_IMAGE": l0_image, "AGENT_CACHE_BUST": cache_bust},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Build context preparation
+# ---------------------------------------------------------------------------
+
+
+def prepare_build_context(dest: Path) -> None:
+    """Stage all resources and render Dockerfiles into *dest*.
+
+    After calling this, *dest* contains everything needed for ``podman build``:
+    - ``L0.Dockerfile``, ``L1.cli.Dockerfile``
+    - ``scripts/``, ``toad-agents/``, ``tmux/``
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    stage_scripts(dest / "scripts")
+    stage_toad_agents(dest / "toad-agents")
+    stage_tmux_config(dest / "tmux")
+
+
+# ---------------------------------------------------------------------------
+# Image building
+# ---------------------------------------------------------------------------
+
+
+def _check_podman() -> None:
+    """Raise SystemExit if podman is not on PATH."""
+    if shutil.which("podman") is None:
+        raise SystemExit("podman not found; please install podman")
+
+
+def _image_exists(image: str) -> bool:
+    """Check if a container image exists locally."""
+    result = subprocess.run(
+        ["podman", "image", "exists", image],
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def build_base_images(
+    base_image: str = "ubuntu:24.04",
+    *,
+    rebuild: bool = False,
+    full_rebuild: bool = False,
+    build_dir: Path | None = None,
+) -> ImageSet:
+    """Build L0 + L1 container images and return their tags.
+
+    Skips building if images already exist locally (unless *rebuild* or
+    *full_rebuild* is set).
+
+    Args:
+        base_image: Base OS image (e.g. ``ubuntu:24.04``, ``nvidia/cuda:...``).
+        rebuild: Force rebuild with cache bust (refreshes agent installs).
+        full_rebuild: Force rebuild with ``--no-cache --pull=always``.
+        build_dir: Override the build context directory (default: temp dir).
+
+    Returns:
+        :class:`ImageSet` with the L0 and L1 image tags.
+    """
+    _check_podman()
+
+    l0_tag = l0_image_tag(base_image)
+    l1_tag = l1_image_tag(base_image)
+
+    # Skip if both images exist and no forced rebuild
+    if not rebuild and not full_rebuild:
+        if _image_exists(l0_tag) and _image_exists(l1_tag):
+            return ImageSet(l0=l0_tag, l1=l1_tag)
+
+    # Prepare build context
+    import tempfile
+
+    own_tmp = build_dir is None
+    context = build_dir or Path(tempfile.mkdtemp(prefix="terok-agent-build-"))
+    try:
+        prepare_build_context(context)
+
+        # Render and write Dockerfiles
+        l0_content = render_l0(base_image)
+        l1_content = render_l1(l0_tag, cache_bust=str(int(time.time())))
+        (context / "L0.Dockerfile").write_text(l0_content)
+        (context / "L1.cli.Dockerfile").write_text(l1_content)
+
+        ctx = str(context)
+
+        # Build L0
+        cmd_l0 = ["podman", "build", "-f", str(context / "L0.Dockerfile")]
+        cmd_l0 += ["--build-arg", f"BASE_IMAGE={base_image}"]
+        cmd_l0 += ["-t", l0_tag]
+        if full_rebuild:
+            cmd_l0 += ["--no-cache", "--pull=always"]
+        cmd_l0.append(ctx)
+
+        print("$", " ".join(cmd_l0))
+        subprocess.run(cmd_l0, check=True)
+
+        # Build L1
+        cmd_l1 = ["podman", "build", "-f", str(context / "L1.cli.Dockerfile")]
+        cmd_l1 += ["--build-arg", f"BASE_IMAGE={l0_tag}"]
+        cmd_l1 += ["--build-arg", f"AGENT_CACHE_BUST={int(time.time())}"]
+        cmd_l1 += ["-t", l1_tag]
+        if full_rebuild:
+            cmd_l1.append("--no-cache")
+        cmd_l1.append(ctx)
+
+        print("$", " ".join(cmd_l1))
+        subprocess.run(cmd_l1, check=True)
+
+    except subprocess.CalledProcessError as e:
+        raise SystemExit(f"Image build failed: {e}") from e
+    finally:
+        if own_tmp:
+            shutil.rmtree(context, ignore_errors=True)
+
+    return ImageSet(l0=l0_tag, l1=l1_tag)

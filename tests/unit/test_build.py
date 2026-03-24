@@ -1,13 +1,124 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for build resource staging functions."""
+"""Tests for build module: image naming, template rendering, resource staging."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from terok_agent.build import stage_scripts, stage_tmux_config, stage_toad_agents
+from terok_agent.build import (
+    ImageSet,
+    _base_tag,
+    l0_image_tag,
+    l1_image_tag,
+    prepare_build_context,
+    render_l0,
+    render_l1,
+    stage_scripts,
+    stage_tmux_config,
+    stage_toad_agents,
+)
+
+# ---------------------------------------------------------------------------
+# Image naming
+# ---------------------------------------------------------------------------
+
+
+class TestImageNaming:
+    """Verify OCI tag derivation from base image strings."""
+
+    def test_ubuntu_default(self) -> None:
+        assert _base_tag("ubuntu:24.04") == "ubuntu-24.04"
+
+    def test_empty_falls_back(self) -> None:
+        assert _base_tag("") == "ubuntu-24.04"
+
+    def test_nvidia_cuda(self) -> None:
+        tag = _base_tag("nvidia/cuda:12.4.1-devel-ubuntu24.04")
+        assert tag == "nvidia-cuda-12.4.1-devel-ubuntu24.04"
+
+    def test_long_tag_truncated(self) -> None:
+        long_name = "a" * 200
+        tag = _base_tag(long_name)
+        assert len(tag) <= 120
+
+    def test_l0_tag(self) -> None:
+        assert l0_image_tag("ubuntu:24.04") == "terok-l0:ubuntu-24.04"
+
+    def test_l1_tag(self) -> None:
+        assert l1_image_tag("ubuntu:24.04") == "terok-l1-cli:ubuntu-24.04"
+
+    def test_image_set(self) -> None:
+        s = ImageSet(l0="terok-l0:test", l1="terok-l1-cli:test")
+        assert s.l0 == "terok-l0:test"
+        assert s.l1 == "terok-l1-cli:test"
+
+
+# ---------------------------------------------------------------------------
+# Template rendering
+# ---------------------------------------------------------------------------
+
+
+class TestTemplateRendering:
+    """Verify Jinja2 Dockerfile template rendering."""
+
+    def test_l0_is_valid_dockerfile(self) -> None:
+        content = render_l0("ubuntu:24.04")
+        assert content.startswith("# syntax=docker")
+        assert "FROM" in content
+
+    def test_l0_contains_init_script(self) -> None:
+        content = render_l0()
+        assert "init-ssh-and-repo.sh" in content
+
+    def test_l0_contains_tmux(self) -> None:
+        content = render_l0()
+        assert "container-tmux.conf" in content
+
+    def test_l0_contains_base_image_arg(self) -> None:
+        content = render_l0()
+        assert "ARG BASE_IMAGE=" in content
+
+    def test_l1_is_valid_dockerfile(self) -> None:
+        content = render_l1("terok-l0:test")
+        assert content.startswith("# syntax=docker")
+        assert "FROM" in content
+
+    def test_l1_contains_agent_installs(self) -> None:
+        content = render_l1("terok-l0:test")
+        assert "@openai/codex" in content
+        assert "claude" in content.lower()
+
+    def test_l1_contains_cache_bust_arg(self) -> None:
+        content = render_l1("terok-l0:test")
+        assert "ARG AGENT_CACHE_BUST=" in content
+
+
+# ---------------------------------------------------------------------------
+# Build context preparation
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareBuildContext:
+    """Verify full build context staging."""
+
+    def test_stages_all_resources(self, tmp_path: Path) -> None:
+        prepare_build_context(tmp_path)
+        assert (tmp_path / "scripts" / "init-ssh-and-repo.sh").is_file()
+        assert (tmp_path / "toad-agents" / "blablador.helmholtz.de.toml").is_file()
+        assert (tmp_path / "tmux" / "container-tmux.conf").is_file()
+
+    def test_creates_dest_if_missing(self, tmp_path: Path) -> None:
+        dest = tmp_path / "nested" / "build"
+        prepare_build_context(dest)
+        assert dest.is_dir()
+        assert (dest / "scripts").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# Resource staging
+# ---------------------------------------------------------------------------
 
 
 class TestStageScripts:
