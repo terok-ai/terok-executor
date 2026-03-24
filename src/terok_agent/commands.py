@@ -107,7 +107,7 @@ def _handle_run(
     no_gate: bool = False,
     branch: str | None = None,
     name: str | None = None,
-    unrestricted: bool = False,
+    restricted: bool = False,
     gpu: bool = False,
     bypass_shield_no_protection: bool = False,
 ) -> None:
@@ -120,7 +120,7 @@ def _handle_run(
         "gate": effective_gate,
         "name": name,
         "branch": branch,
-        "unrestricted": unrestricted,
+        "unrestricted": not restricted,
         "gpu": gpu,
         "bypass_shield": bypass_shield_no_protection,
     }
@@ -209,9 +209,9 @@ RUN_COMMAND = CommandDef(
         ArgDef(name="--branch", help="Git branch to check out"),
         ArgDef(name="--name", help="Container name override"),
         ArgDef(
-            name="--unrestricted",
+            name="--restricted",
             action="store_true",
-            help="Allow agent full permissions (auto-approve)",
+            help="Restrict agent permissions (no auto-approve, no-new-privileges)",
         ),
         ArgDef(name="--gpu", action="store_true", help="Enable GPU passthrough"),
         ArgDef(
