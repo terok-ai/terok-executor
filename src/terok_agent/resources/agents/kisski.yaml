@@ -34,3 +34,6 @@ opencode:
   env_var_prefix: KISSKI
   config_dir: .kisski
   auth_key_url: https://chat-ai.academiccloud.de/
+
+# OpenCode runtime mounts are defined in opencode.yaml and deduplicated
+# by the registry — no need to repeat them here.

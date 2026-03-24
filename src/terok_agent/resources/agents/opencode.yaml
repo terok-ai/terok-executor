@@ -26,3 +26,18 @@ session:
 
 capabilities:
   log_format: plain
+
+# Shared state dirs for OpenCode runtime (persist across container runs).
+# Defined here once — the registry deduplicates by host_dir, so all
+# OpenCode-based agents (blablador, kisski) get these mounts without
+# repeating them in their own YAML files.
+mounts:
+  - host_dir: _opencode-config
+    container_path: /home/dev/.config/opencode
+    label: OpenCode config
+  - host_dir: _opencode-data
+    container_path: /home/dev/.local/share/opencode
+    label: OpenCode data
+  - host_dir: _opencode-state
+    container_path: /home/dev/.local/state
+    label: OpenCode state
