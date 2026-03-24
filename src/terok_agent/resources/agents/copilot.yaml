@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: agent
+label: GitHub Copilot
+binary: copilot
+tier: 3
+
+git_identity:
+  name: Copilot
+  email: noreply@github.com
+
+headless:
+  prompt_flag: "-p"
+  model_flag: "--model"
+
+auto_approve:
+  env:
+    COPILOT_ALLOW_ALL: "true"
+
+session:
+  supports_resume: false
+
+capabilities:
+  log_format: plain

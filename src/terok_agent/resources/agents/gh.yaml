@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: tool
+label: GitHub CLI
+binary: gh
+
+auth:
+  host_dir: _gh-config
+  container_mount: /home/dev/.config/gh
+  command: ["gh", "auth", "login"]
+  banner_hint: |-
+    You will be guided through GitHub authentication.
+    Recommended: choose 'Login with a web browser' or paste a token.

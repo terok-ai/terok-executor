@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: agent
+label: Claude
+binary: claude
+tier: 1
+
+git_identity:
+  name: Claude
+  email: noreply@anthropic.com
+
+headless:
+  prompt_flag: "-p"
+  output_format_flags: ["--output-format", "stream-json"]
+  model_flag: "--model"
+  max_turns_flag: "--max-turns"
+  verbose_flag: "--verbose"
+
+auto_approve:
+  env: {}
+  flags: []
+
+session:
+  supports_resume: true
+  resume_flag: "--resume"
+  supports_hook: true
+
+capabilities:
+  agents_json: true
+  add_dir: true
+  log_format: claude-stream-json
+
+auth:
+  host_dir: _claude-config
+  container_mount: /home/dev/.claude
+  auth_key:
+    label: Claude
+    key_url: https://console.anthropic.com/settings/keys
+    env_var: ANTHROPIC_API_KEY
+    config_path: ~/.claude/config.json
+    printf_template: '{"api_key": "%s"}'
+    tool_name: claude
+  banner_hint: |-
+    You will be prompted to enter your Claude API key.
+    Get your API key at: https://console.anthropic.com/settings/keys

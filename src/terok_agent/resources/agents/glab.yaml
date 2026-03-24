@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: tool
+label: GitLab CLI
+binary: glab
+
+auth:
+  host_dir: _glab-config
+  container_mount: /home/dev/.config/glab-cli
+  command: ["glab", "auth", "login"]
+  banner_hint: |-
+    You will be guided through GitLab authentication.
+    You will need a GitLab personal access token.
+    Create one at: https://gitlab.com/-/user_settings/personal_access_tokens
