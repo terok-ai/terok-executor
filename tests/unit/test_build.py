@@ -175,6 +175,11 @@ class TestBuildBaseImages:
         assert "--no-cache" in l0_cmd
         assert "--pull=always" in l0_cmd
 
+        # L1 gets --no-cache but NOT --pull=always (it builds FROM L0, not a remote)
+        l1_cmd = mock_run.call_args_list[1][0][0]
+        assert "--no-cache" in l1_cmd
+        assert "--pull=always" not in l1_cmd
+
     def test_build_failure_raises_build_error(self, tmp_path: Path) -> None:
         from unittest.mock import patch
 
