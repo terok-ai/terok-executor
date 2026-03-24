@@ -221,7 +221,12 @@ def main() -> int:
     acknowledge = args["acknowledge"]
 
     # Check if we should skip API call due to cache age
-    if min_age_seconds is not None and check_cache_age(CACHE_PATH, min_age_seconds):
+    # --ack always forces a fresh fetch regardless of cache freshness
+    if (
+        not acknowledge
+        and min_age_seconds is not None
+        and check_cache_age(CACHE_PATH, min_age_seconds)
+    ):
         return 0
 
     # Get API key
