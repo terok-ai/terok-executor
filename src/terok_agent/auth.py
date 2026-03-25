@@ -122,15 +122,26 @@ _KNOWN_CREDENTIAL_FILES: dict[str, frozenset[str]] = {
 
 
 def _credential_file_names(provider_name: str) -> frozenset[str]:
-    """Return filenames to skip when seeding the auth temp dir.
+    """Return credential filenames for *provider_name*.
 
     Uses a static mapping of known credential filenames per provider.
     This avoids a circular import (auth ↔ registry) while covering all
-    bundled providers.  User-added providers should add their credential
-    files here or they'll be copied into the temp dir (harmless — the
-    extractor will capture them to the DB anyway).
+    bundled providers.
     """
     return _KNOWN_CREDENTIAL_FILES.get(provider_name, frozenset())
+
+
+def _purge_credential_files(root: Path, names: frozenset[str]) -> None:
+    """Recursively remove files matching *names* from *root*.
+
+    Ensures the auth container starts unauthenticated so the CLI tool
+    goes through the full auth flow and writes fresh credential files.
+    """
+    if not names:
+        return
+    for path in root.rglob("*"):
+        if path.is_file() and path.name in names:
+            path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -188,15 +199,10 @@ def _run_auth_container(
         # sessions) so the auth tool finds a familiar environment.  Only the
         # credential file produced by the auth flow is extracted to the DB —
         # the temp dir is deleted afterwards, the shared mount is never written to.
-        #
-        # IMPORTANT: skip any legacy credential files that may linger in the
-        # shared mount from before the credential proxy was enabled.
-        skip_names = _credential_file_names(provider.name)
+        credential_files = _credential_file_names(provider.name)
         shared_dir = envs_base_dir / provider.host_dir_name
         if shared_dir.is_dir():
             for item in shared_dir.iterdir():
-                if item.name in skip_names:
-                    continue
                 dest = host_dir / item.name
                 try:
                     if item.is_dir():
@@ -207,6 +213,10 @@ def _run_auth_container(
                         shutil.copy2(item, dest)
                 except OSError:
                     pass  # skip unreadable/broken entries — non-fatal
+
+        # Strip all known credential files so the CLI starts unauthenticated
+        # and goes through the full auth flow, writing fresh credentials.
+        _purge_credential_files(host_dir, credential_files)
 
         container_name = f"{project_id}-auth-{provider.name}"
         _cleanup_existing_container(container_name)
@@ -266,6 +276,12 @@ def _capture_credentials(provider_name: str, auth_dir: Path, credential_set: str
         print(f"\nWarning: could not extract credentials for {provider_name}: {exc}")
         print("The auth flow completed but credentials were not captured.")
         print("You may need to re-authenticate or check the credential file format.")
+        # List files in the auth dir to aid debugging
+        files = sorted(p.relative_to(auth_dir) for p in auth_dir.rglob("*") if p.is_file())
+        if files:
+            print(f"\nFiles found in auth dir ({len(files)}):")
+            for f in files[:20]:
+                print(f"  {f}")
         return
 
     try:
