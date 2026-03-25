@@ -30,6 +30,17 @@ capabilities:
   add_dir: true
   log_format: claude-stream-json
 
+credential_proxy:
+  route_prefix: claude
+  upstream: https://api.anthropic.com
+  auth_header: Authorization
+  auth_prefix: "Bearer "
+  credential_type: oauth
+  credential_file: .credentials.json
+  phantom_env:
+    ANTHROPIC_API_KEY: true
+  base_url_env: ANTHROPIC_BASE_URL
+
 auth:
   host_dir: _claude-config
   container_mount: /home/dev/.claude

@@ -27,6 +27,16 @@ session:
 capabilities:
   log_format: plain
 
+credential_proxy:
+  route_prefix: vibe
+  upstream: https://api.mistral.ai
+  auth_header: Authorization
+  auth_prefix: "Bearer "
+  credential_type: api_key
+  credential_file: .env
+  phantom_env:
+    MISTRAL_API_KEY: true
+
 auth:
   host_dir: _vibe-config
   container_mount: /home/dev/.vibe

@@ -73,6 +73,9 @@ from .commands import COMMANDS as AGENT_COMMANDS, CommandDef
 # -- Config stack --------------------------------------------------------------
 from .config_stack import ConfigScope, ConfigStack
 
+# -- Credential proxy ----------------------------------------------------------
+from .credential_extractors import extract_credential
+
 # -- Provider registry ---------------------------------------------------------
 from .headless_providers import (
     HEADLESS_PROVIDERS,
@@ -88,6 +91,7 @@ from .headless_providers import (
 
 # -- Instructions --------------------------------------------------------------
 from .instructions import bundled_default_instructions, resolve_instructions
+from .registry import CredentialProxyRoute
 
 # -- Runner facade -------------------------------------------------------------
 from .runner import AgentRunner
@@ -150,6 +154,9 @@ __all__ = [
     "stage_scripts",
     "stage_toad_agents",
     "stage_tmux_config",
+    # Credential proxy
+    "CredentialProxyRoute",
+    "extract_credential",
     # Command registry
     "AGENT_COMMANDS",
     "CommandDef",

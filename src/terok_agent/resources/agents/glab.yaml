@@ -5,6 +5,14 @@ kind: tool
 label: GitLab CLI
 binary: glab
 
+credential_proxy:
+  route_prefix: gl
+  upstream: https://gitlab.com/api/v4
+  auth_header: PRIVATE-TOKEN
+  auth_prefix: ""
+  credential_type: pat
+  credential_file: config.yml
+
 auth:
   host_dir: _glab-config
   container_mount: /home/dev/.config/glab-cli
