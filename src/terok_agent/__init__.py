@@ -91,7 +91,7 @@ from .headless_providers import (
 
 # -- Instructions --------------------------------------------------------------
 from .instructions import bundled_default_instructions, resolve_instructions
-from .registry import CredentialProxyRoute
+from .registry import CredentialProxyRoute, get_registry
 
 # -- Runner facade -------------------------------------------------------------
 from .runner import AgentRunner
@@ -158,6 +158,8 @@ __all__ = [
     # Credential proxy
     "CredentialProxyRoute",
     "extract_credential",
+    # Registry
+    "get_registry",
     # Command registry
     "AGENT_COMMANDS",
     "CommandDef",
