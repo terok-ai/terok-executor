@@ -159,7 +159,7 @@ class TestDeserializeProvider:
 class TestDeserializeAuth:
     """Verify YAML → AuthProvider conversion."""
 
-    def test_claude_auth_key(self) -> None:
+    def test_claude_auth_uses_native_cli(self) -> None:
         agents = _load_bundled_agents()
         ap = _to_auth_provider("claude", agents["claude"])
 
@@ -167,7 +167,7 @@ class TestDeserializeAuth:
         assert ap.name == "claude"
         assert ap.host_dir_name == "_claude-config"
         assert ap.container_mount == "/home/dev/.claude"
-        assert "ANTHROPIC_API_KEY" in " ".join(ap.command)
+        assert ap.command == ["claude"]
 
     def test_codex_auth_command(self) -> None:
         agents = _load_bundled_agents()

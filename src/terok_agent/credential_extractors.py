@@ -27,30 +27,44 @@ def _expect_mapping(value: object, *, context: str) -> dict:
 
 
 def extract_claude_oauth(base_dir: Path) -> dict:
-    """Extract Claude OAuth tokens from ``.credentials.json``.
+    """Extract Claude credentials — OAuth tokens or API key.
 
-    Claude stores OAuth data under the ``claudeAiOauth`` key with
-    nested ``token`` containing ``accessToken`` and ``refreshToken``.
+    Claude stores OAuth data in ``.credentials.json`` under
+    ``claudeAiOauth.token.{accessToken, refreshToken}``.  If the user
+    authenticated with an API key instead, ``config.json`` contains
+    ``{"api_key": "..."}``.  Both paths are checked.
     """
+    # Try OAuth first (.credentials.json)
     cred_file = base_dir / ".credentials.json"
-    if not cred_file.is_file():
-        raise ValueError(f"Claude credential file not found: {cred_file}")
+    if cred_file.is_file():
+        data = _expect_mapping(
+            json.loads(cred_file.read_text(encoding="utf-8")), context=str(cred_file)
+        )
+        oauth = _expect_mapping(data.get("claudeAiOauth", {}), context=f"{cred_file}:claudeAiOauth")
+        token_data = _expect_mapping(oauth.get("token", {}), context=f"{cred_file}:token")
+        access_token = token_data.get("accessToken")
+        if access_token:
+            return {
+                "type": "oauth",
+                "access_token": access_token,
+                "refresh_token": token_data.get("refreshToken", ""),
+                "expires_at": token_data.get("expiresAt"),
+            }
 
-    data = _expect_mapping(
-        json.loads(cred_file.read_text(encoding="utf-8")), context=str(cred_file)
+    # Fall back to API key (config.json)
+    config_file = base_dir / "config.json"
+    if config_file.is_file():
+        data = _expect_mapping(
+            json.loads(config_file.read_text(encoding="utf-8")), context=str(config_file)
+        )
+        api_key = data.get("api_key")
+        if api_key:
+            return {"type": "api_key", "key": api_key}
+
+    raise ValueError(
+        f"No Claude credentials found in {base_dir} "
+        "(checked .credentials.json for OAuth, config.json for API key)"
     )
-    oauth = _expect_mapping(data.get("claudeAiOauth", {}), context=f"{cred_file}:claudeAiOauth")
-    token_data = _expect_mapping(oauth.get("token", {}), context=f"{cred_file}:token")
-    access_token = token_data.get("accessToken")
-    if not access_token:
-        raise ValueError("Claude credential file has no accessToken")
-
-    return {
-        "type": "oauth",
-        "access_token": access_token,
-        "refresh_token": token_data.get("refreshToken", ""),
-        "expires_at": token_data.get("expiresAt"),
-    }
 
 
 def extract_codex_oauth(base_dir: Path) -> dict:

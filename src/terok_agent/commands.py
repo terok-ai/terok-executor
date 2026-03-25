@@ -231,7 +231,7 @@ AUTH_COMMAND = CommandDef(
 
 AGENTS_COMMAND = CommandDef(
     name="agents",
-    help="List registered agents",
+    help="List registered agents (use --all to include tools like gh, glab)",
     handler=_handle_agents,
     args=(
         ArgDef(name="--all", action="store_true", dest="show_all", help="Include tools (gh, glab)"),

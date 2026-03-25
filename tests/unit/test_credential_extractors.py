@@ -22,10 +22,10 @@ from terok_agent.credential_extractors import (
 
 
 class TestClaudeOAuth:
-    """Verify Claude credential extraction."""
+    """Verify Claude credential extraction (OAuth + API key fallback)."""
 
-    def test_extracts_access_token(self, tmp_path: Path) -> None:
-        """Extracts accessToken from .credentials.json."""
+    def test_extracts_oauth_token(self, tmp_path: Path) -> None:
+        """Extracts accessToken from .credentials.json (OAuth path)."""
         cred = {
             "claudeAiOauth": {
                 "token": {
@@ -41,15 +41,38 @@ class TestClaudeOAuth:
         assert result["refresh_token"] == "rt-test-456"
         assert result["type"] == "oauth"
 
-    def test_missing_file_raises(self, tmp_path: Path) -> None:
-        """Raises ValueError when file is missing."""
-        with pytest.raises(ValueError, match="not found"):
+    def test_extracts_api_key_fallback(self, tmp_path: Path) -> None:
+        """Falls back to config.json API key when no OAuth credentials."""
+        (tmp_path / "config.json").write_text(json.dumps({"api_key": "sk-ant-key-test"}))
+        result = extract_claude_oauth(tmp_path)
+        assert result["key"] == "sk-ant-key-test"
+        assert result["type"] == "api_key"
+
+    def test_oauth_takes_precedence(self, tmp_path: Path) -> None:
+        """OAuth credentials win when both files exist."""
+        cred = {"claudeAiOauth": {"token": {"accessToken": "sk-oauth"}}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+        (tmp_path / "config.json").write_text(json.dumps({"api_key": "sk-apikey"}))
+        result = extract_claude_oauth(tmp_path)
+        assert result["type"] == "oauth"
+        assert result["access_token"] == "sk-oauth"
+
+    def test_no_credentials_raises(self, tmp_path: Path) -> None:
+        """Raises ValueError when neither file exists."""
+        with pytest.raises(ValueError, match="No Claude credentials"):
             extract_claude_oauth(tmp_path)
 
-    def test_empty_token_raises(self, tmp_path: Path) -> None:
-        """Raises ValueError when accessToken is empty."""
+    def test_empty_oauth_falls_back_to_api_key(self, tmp_path: Path) -> None:
+        """Empty OAuth token falls back to API key."""
         (tmp_path / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"token": {}}}))
-        with pytest.raises(ValueError, match="no accessToken"):
+        (tmp_path / "config.json").write_text(json.dumps({"api_key": "sk-fallback"}))
+        result = extract_claude_oauth(tmp_path)
+        assert result["type"] == "api_key"
+
+    def test_empty_everything_raises(self, tmp_path: Path) -> None:
+        """Raises when OAuth has no token AND config.json has no api_key."""
+        (tmp_path / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"token": {}}}))
+        with pytest.raises(ValueError, match="No Claude credentials"):
             extract_claude_oauth(tmp_path)
 
 

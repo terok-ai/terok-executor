@@ -104,6 +104,36 @@ AUTH_PROVIDERS: dict[str, AuthProvider] = {}
 
 
 # ---------------------------------------------------------------------------
+# Credential file exclusion
+# ---------------------------------------------------------------------------
+
+# Known credential filenames per provider — these must never be copied from
+# the shared mount into the auth temp dir (they may be legacy leftovers from
+# before the credential proxy was enabled).
+_KNOWN_CREDENTIAL_FILES: dict[str, frozenset[str]] = {
+    "claude": frozenset({".credentials.json", "config.json"}),
+    "codex": frozenset({"auth.json"}),
+    "vibe": frozenset({".env"}),
+    "blablador": frozenset({"config.json"}),
+    "kisski": frozenset({"config.json"}),
+    "gh": frozenset({"hosts.yml"}),
+    "glab": frozenset({"config.yml"}),
+}
+
+
+def _credential_file_names(provider_name: str) -> frozenset[str]:
+    """Return filenames to skip when seeding the auth temp dir.
+
+    Uses a static mapping of known credential filenames per provider.
+    This avoids a circular import (auth ↔ registry) while covering all
+    bundled providers.  User-added providers should add their credential
+    files here or they'll be copied into the temp dir (harmless — the
+    extractor will capture them to the DB anyway).
+    """
+    return _KNOWN_CREDENTIAL_FILES.get(provider_name, frozenset())
+
+
+# ---------------------------------------------------------------------------
 # Shared container lifecycle
 # ---------------------------------------------------------------------------
 
@@ -158,15 +188,20 @@ def _run_auth_container(
         # sessions) so the auth tool finds a familiar environment.  Only the
         # credential file produced by the auth flow is extracted to the DB —
         # the temp dir is deleted afterwards, the shared mount is never written to.
+        #
+        # IMPORTANT: skip any legacy credential files that may linger in the
+        # shared mount from before the credential proxy was enabled.
+        skip_names = _credential_file_names(provider.name)
         shared_dir = envs_base_dir / provider.host_dir_name
         if shared_dir.is_dir():
             for item in shared_dir.iterdir():
+                if item.name in skip_names:
+                    continue
                 dest = host_dir / item.name
                 try:
                     if item.is_dir():
                         shutil.copytree(item, dest, symlinks=True, dirs_exist_ok=True)
                     elif item.is_symlink():
-                        # Preserve symlinks (may be dangling — that's OK)
                         dest.symlink_to(item.readlink())
                     else:
                         shutil.copy2(item, dest)
