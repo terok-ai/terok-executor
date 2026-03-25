@@ -369,8 +369,13 @@ class AgentRegistry:
         """
         import json
 
-        routes = {}
+        routes: dict[str, dict[str, str]] = {}
         for route in self._proxy_routes.values():
+            if route.route_prefix in routes:
+                raise ValueError(
+                    f"Duplicate route prefix {route.route_prefix!r} "
+                    f"(provider {route.provider!r} collides with an earlier entry)"
+                )
             routes[route.route_prefix] = {
                 "upstream": route.upstream,
                 "auth_header": route.auth_header,

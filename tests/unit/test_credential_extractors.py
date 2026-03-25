@@ -140,6 +140,34 @@ class TestGlabToken:
         assert result["host"] == "gitlab.com"
 
 
+class TestMalformedPayloads:
+    """Verify extractors reject non-mapping JSON/YAML."""
+
+    def test_claude_array_root_raises(self, tmp_path: Path) -> None:
+        """Claude extractor rejects JSON array root."""
+        (tmp_path / ".credentials.json").write_text("[]")
+        with pytest.raises(ValueError, match="Expected mapping"):
+            extract_claude_oauth(tmp_path)
+
+    def test_codex_array_root_raises(self, tmp_path: Path) -> None:
+        """Codex extractor rejects JSON array root."""
+        (tmp_path / "auth.json").write_text("[]")
+        with pytest.raises(ValueError, match="Expected mapping"):
+            extract_codex_oauth(tmp_path)
+
+    def test_json_api_key_array_root_raises(self, tmp_path: Path) -> None:
+        """JSON API key extractor rejects non-mapping root."""
+        (tmp_path / "config.json").write_text('"just a string"')
+        with pytest.raises(ValueError, match="Expected mapping"):
+            extract_json_api_key(tmp_path)
+
+    def test_glab_non_mapping_hosts_raises(self, tmp_path: Path) -> None:
+        """GitLab extractor rejects non-mapping hosts section."""
+        (tmp_path / "config.yml").write_text("hosts:\n  - item1\n  - item2\n")
+        with pytest.raises(ValueError, match="Expected mapping"):
+            extract_glab_token(tmp_path)
+
+
 class TestExtractCredential:
     """Verify the dispatch function."""
 

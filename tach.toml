@@ -71,6 +71,7 @@ depends_on = [
 path = "terok_agent.auth"
 depends_on = [
     "terok_agent._util",
+    "terok_agent.credential_extractors",
 ]
 
 # YAML agent registry — loads bundled + user agent definitions

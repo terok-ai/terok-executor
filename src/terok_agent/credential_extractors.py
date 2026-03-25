@@ -19,6 +19,13 @@ import json
 from pathlib import Path
 
 
+def _expect_mapping(value: object, *, context: str) -> dict:
+    """Validate that *value* is a dict, raising ``ValueError`` if not."""
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected mapping in {context}, got {type(value).__name__}")
+    return value
+
+
 def extract_claude_oauth(base_dir: Path) -> dict:
     """Extract Claude OAuth tokens from ``.credentials.json``.
 
@@ -29,9 +36,11 @@ def extract_claude_oauth(base_dir: Path) -> dict:
     if not cred_file.is_file():
         raise ValueError(f"Claude credential file not found: {cred_file}")
 
-    data = json.loads(cred_file.read_text(encoding="utf-8"))
-    oauth = data.get("claudeAiOauth", {})
-    token_data = oauth.get("token", {})
+    data = _expect_mapping(
+        json.loads(cred_file.read_text(encoding="utf-8")), context=str(cred_file)
+    )
+    oauth = _expect_mapping(data.get("claudeAiOauth", {}), context=f"{cred_file}:claudeAiOauth")
+    token_data = _expect_mapping(oauth.get("token", {}), context=f"{cred_file}:token")
     access_token = token_data.get("accessToken")
     if not access_token:
         raise ValueError("Claude credential file has no accessToken")
@@ -50,8 +59,10 @@ def extract_codex_oauth(base_dir: Path) -> dict:
     if not cred_file.is_file():
         raise ValueError(f"Codex credential file not found: {cred_file}")
 
-    data = json.loads(cred_file.read_text(encoding="utf-8"))
-    tokens = data.get("tokens", {})
+    data = _expect_mapping(
+        json.loads(cred_file.read_text(encoding="utf-8")), context=str(cred_file)
+    )
+    tokens = _expect_mapping(data.get("tokens", {}), context=f"{cred_file}:tokens")
     access_token = tokens.get("access_token")
     if not access_token:
         raise ValueError("Codex credential file has no access_token")
@@ -98,7 +109,9 @@ def extract_json_api_key(base_dir: Path, filename: str = "config.json") -> dict:
     if not cred_file.is_file():
         raise ValueError(f"JSON config not found: {cred_file}")
 
-    data = json.loads(cred_file.read_text(encoding="utf-8"))
+    data = _expect_mapping(
+        json.loads(cred_file.read_text(encoding="utf-8")), context=str(cred_file)
+    )
     key = data.get("api_key")
     if not key:
         raise ValueError(f"No api_key field in {cred_file}")
@@ -149,7 +162,7 @@ def extract_glab_token(base_dir: Path) -> dict:
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected config.yml format: {type(data)}")
 
-    hosts = data.get("hosts", {})
+    hosts = _expect_mapping(data.get("hosts", {}), context=f"{config_file}:hosts")
     for host, host_data in hosts.items():
         if isinstance(host_data, dict):
             token = host_data.get("token")

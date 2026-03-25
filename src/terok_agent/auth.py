@@ -19,7 +19,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ._util import ensure_dir_writable, podman_userns_args
+from ._util import podman_userns_args
 
 # ---------------------------------------------------------------------------
 # Provider descriptor
@@ -136,50 +136,108 @@ def _run_auth_container(
     *,
     envs_base_dir: Path,
     image: str,
+    credential_set: str = "default",
 ) -> None:
-    """Run an auth container for the given provider."""
+    """Run an auth container, capture credentials to the DB.
+
+    Uses a **temporary directory** as the container mount target so the
+    vendor auth flow writes credential files into a disposable location.
+    After the container exits, per-provider extractors parse the credential
+    files and store them in the credential DB.  The shared config mount
+    (settings, memories) is untouched — no real secrets land there.
+    """
+    import tempfile
+
     _check_podman()
 
-    host_dir = envs_base_dir / provider.host_dir_name
-    ensure_dir_writable(host_dir, f"{provider.label} config")
+    # Use a temp dir as the mount target — secrets go here, then extracted
+    with tempfile.TemporaryDirectory(prefix=f"terok-auth-{provider.name}-") as tmpdir:
+        host_dir = Path(tmpdir)
 
-    container_name = f"{project_id}-auth-{provider.name}"
-    _cleanup_existing_container(container_name)
+        # Copy existing config (settings, memories) from shared mount into temp dir
+        # so the auth tool has a familiar environment
+        shared_dir = envs_base_dir / provider.host_dir_name
+        if shared_dir.is_dir():
+            import shutil
 
-    cmd = ["podman", "run", "--rm"]
-    cmd.extend(podman_userns_args())
-    cmd.append("-it")
-    if provider.extra_run_args:
-        cmd.extend(provider.extra_run_args)
-    cmd.extend(["-v", f"{host_dir}:{provider.container_mount}:Z"])
-    cmd.extend(["--name", container_name])
-    cmd.append(image)
-    cmd.extend(provider.command)
+            for item in shared_dir.iterdir():
+                dest = host_dir / item.name
+                if item.is_dir():
+                    shutil.copytree(item, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, dest)
 
-    # Banner
-    print(f"Authenticating {provider.label} for project: {project_id}")
-    print()
-    for line in provider.banner_hint.splitlines():
-        print(line)
-    print()
-    print("$", " ".join(map(str, cmd)))
-    print()
+        container_name = f"{project_id}-auth-{provider.name}"
+        _cleanup_existing_container(container_name)
+
+        cmd = ["podman", "run", "--rm"]
+        cmd.extend(podman_userns_args())
+        cmd.append("-it")
+        if provider.extra_run_args:
+            cmd.extend(provider.extra_run_args)
+        cmd.extend(["-v", f"{host_dir}:{provider.container_mount}:Z"])
+        cmd.extend(["--name", container_name])
+        cmd.append(image)
+        cmd.extend(provider.command)
+
+        # Banner
+        print(f"Authenticating {provider.label} for project: {project_id}")
+        print()
+        for line in provider.banner_hint.splitlines():
+            print(line)
+        print()
+        print("$", " ".join(map(str, cmd)))
+        print()
+
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 130:
+                print("\nAuthentication container stopped.")
+            else:
+                raise SystemExit(f"Auth failed: {e}")
+        except KeyboardInterrupt:
+            print("\nAuthentication interrupted.")
+            subprocess.run(
+                ["podman", "rm", "-f", container_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return
+
+        # Extract credentials from the temp dir and store in DB
+        _capture_credentials(provider.name, host_dir, credential_set)
+
+
+def _capture_credentials(provider_name: str, auth_dir: Path, credential_set: str) -> None:
+    """Extract credentials from *auth_dir* and store in the credential DB.
+
+    Uses the per-provider extractors from :mod:`credential_extractors`.
+    If extraction fails (no credential file, malformed), prints a warning
+    but does not raise — the auth flow succeeded, the user can retry.
+    """
+    from .credential_extractors import extract_credential
 
     try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        if e.returncode == 130:
-            print("\nAuthentication container stopped.")
-        else:
-            raise SystemExit(f"Auth failed: {e}")
-    except KeyboardInterrupt:
-        print("\nAuthentication interrupted.")
-        subprocess.run(
-            ["podman", "rm", "-f", container_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        cred_data = extract_credential(provider_name, auth_dir)
+    except ValueError as exc:
+        print(f"\nWarning: could not extract credentials for {provider_name}: {exc}")
+        print("The auth flow completed but credentials were not captured.")
+        print("You may need to re-authenticate or check the credential file format.")
+        return
+
+    try:
+        from terok_sandbox import CredentialDB, SandboxConfig
+
+        cfg = SandboxConfig()
+        db = CredentialDB(cfg.proxy_db_path)
+        db.store_credential(credential_set, provider_name, cred_data)
+        db.close()
+        print(f"\nCredentials captured for {provider_name} (set: {credential_set})")
+    except Exception as exc:
+        print(f"\nWarning: failed to store credentials: {exc}")
+        print("The auth flow completed but credentials were not saved to the proxy DB.")
 
 
 def authenticate(
