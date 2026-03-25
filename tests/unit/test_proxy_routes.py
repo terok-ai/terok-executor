@@ -20,8 +20,8 @@ class TestProxyRoutesParsed:
         assert route is not None
         assert route.route_prefix == "claude"
         assert route.upstream == "https://api.anthropic.com"
-        assert route.auth_header == "Authorization"
-        assert route.auth_prefix == "Bearer "
+        assert route.auth_header == "x-api-key"
+        assert route.auth_prefix == ""
         assert "ANTHROPIC_API_KEY" in route.phantom_env
         assert route.base_url_env == "ANTHROPIC_BASE_URL"
 
@@ -69,7 +69,7 @@ class TestGenerateRoutesJson:
         routes = json.loads(routes_json)
         assert "claude" in routes
         assert routes["claude"]["upstream"] == "https://api.anthropic.com"
-        assert routes["claude"]["auth_header"] == "Authorization"
+        assert routes["claude"]["auth_header"] == "x-api-key"
 
     def test_all_routes_have_upstream(self) -> None:
         """Every route in the JSON has an upstream field."""
