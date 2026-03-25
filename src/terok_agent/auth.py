@@ -200,8 +200,8 @@ def _run_auth_container(
         except subprocess.CalledProcessError as e:
             if e.returncode == 130:
                 print("\nAuthentication container stopped.")
-            else:
-                raise SystemExit(f"Auth failed: {e}")
+                return  # user cancelled — don't capture stale pre-seeded files
+            raise SystemExit(f"Auth failed: {e}")
         except KeyboardInterrupt:
             print("\nAuthentication interrupted.")
             subprocess.run(
@@ -227,7 +227,7 @@ def _capture_credentials(provider_name: str, auth_dir: Path, credential_set: str
 
     try:
         cred_data = extract_credential(provider_name, auth_dir)
-    except ValueError as exc:
+    except Exception as exc:
         print(f"\nWarning: could not extract credentials for {provider_name}: {exc}")
         print("The auth flow completed but credentials were not captured.")
         print("You may need to re-authenticate or check the credential file format.")
