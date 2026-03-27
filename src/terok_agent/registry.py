@@ -497,3 +497,35 @@ def load_registry() -> AgentRegistry:
 def get_registry() -> AgentRegistry:
     """Return the singleton registry instance (loaded once, cached)."""
     return load_registry()
+
+
+def ensure_proxy_routes() -> Path:
+    """Generate ``routes.json`` from the YAML registry and write it to disk.
+
+    The routes file is written to the path configured in
+    :class:`~terok_sandbox.SandboxConfig` (typically
+    ``~/.local/share/terok/proxy/routes.json``).
+
+    Returns the path to the written file.
+    """
+    from terok_sandbox import SandboxConfig
+
+    cfg = SandboxConfig()
+    path = cfg.proxy_routes_path
+    import os
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = get_registry().generate_routes_json() + "\n"
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return path
