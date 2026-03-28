@@ -259,18 +259,17 @@ def _capture_credentials(provider_name: str, auth_dir: Path, credential_set: str
 
 
 def _write_proxy_config(provider_name: str) -> None:
-    """Write proxy base URL into the provider's shared config dir if needed.
+    """Apply ``shared_config_patch`` from the YAML registry after auth.
 
-    Providers like Vibe don't have a ``base_url_env`` — the only way to
-    redirect API traffic through the proxy is to patch the shared config
-    file (e.g. ``~/.vibe/config.toml``).  This is safe because the proxy
-    URL is infrastructure config, not a secret.
+    Patches a TOML config file in the provider's shared config dir to
+    redirect API traffic through the credential proxy.  The patch spec
+    is declared in the agent YAML — no provider-specific code needed.
     """
     from .registry import get_registry
 
     route = get_registry().proxy_routes.get(provider_name)
-    if not route or route.base_url_env:
-        return  # has env var override or no proxy route — nothing to do
+    if not route or not route.shared_config_patch:
+        return
 
     auth_info = AUTH_PROVIDERS.get(provider_name)
     if not auth_info:
@@ -280,17 +279,11 @@ def _write_proxy_config(provider_name: str) -> None:
 
     cfg = SandboxConfig()
     port = get_proxy_port(cfg)
-    proxy_base = f"http://host.containers.internal:{port}/{route.route_prefix}"
+    proxy_url = f"http://host.containers.internal:{port}"
 
-    # Provider-specific config writers
-    if provider_name == "vibe":
-        _write_vibe_proxy_config(cfg, auth_info, proxy_base)
-
-
-def _write_vibe_proxy_config(cfg: object, auth_info: AuthProvider, proxy_base: str) -> None:
-    """Patch ``~/.vibe/config.toml`` to route API calls through the proxy."""
+    patch = route.shared_config_patch
     shared_dir = cfg.effective_envs_dir / auth_info.host_dir_name
-    config_path = shared_dir / "config.toml"
+    config_path = shared_dir / patch["file"]
 
     try:
         import tomllib
@@ -299,28 +292,30 @@ def _write_vibe_proxy_config(cfg: object, auth_info: AuthProvider, proxy_base: s
     except Exception:
         existing = {}
 
-    # Find or create the mistral provider entry
-    providers = existing.get("providers", [])
-    mistral_entry = next((p for p in providers if p.get("name") == "mistral"), None)
-    if mistral_entry:
-        mistral_entry["api_base"] = proxy_base
-    else:
-        providers.append(
-            {
-                "name": "mistral",
-                "api_base": proxy_base,
-                "api_key_env_var": "MISTRAL_API_KEY",
-                "backend": "mistral",
-            }
-        )
-        existing["providers"] = providers
+    # Patch a TOML array-of-tables: find matching entry or create one
+    table_key = patch["toml_table"]
+    match_criteria = patch["toml_match"]
+    values_to_set = {
+        k: v.replace("{proxy_url}", proxy_url) if isinstance(v, str) else v
+        for k, v in patch["toml_set"].items()
+    }
 
-    # Write back as TOML
+    entries = existing.get(table_key, [])
+    target = next(
+        (e for e in entries if all(e.get(k) == v for k, v in match_criteria.items())),
+        None,
+    )
+    if target:
+        target.update(values_to_set)
+    else:
+        entries.append({**match_criteria, **values_to_set})
+        existing[table_key] = entries
+
     import tomli_w
 
     shared_dir.mkdir(parents=True, exist_ok=True)
     config_path.write_bytes(tomli_w.dumps(existing).encode())
-    print(f"Proxy base URL written to {config_path}")
+    print(f"Proxy config written to {config_path}")
 
 
 def store_api_key(

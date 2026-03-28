@@ -187,22 +187,25 @@ class AgentRunner:
             routed = stored_providers & proxy_routes.keys()
             if not routed:
                 return {}
-            phantom_token = db.create_proxy_token("standalone", task_id, credential_set)
+            # Per-provider phantom tokens — each token encodes the provider
+            tokens = {
+                name: db.create_proxy_token("standalone", task_id, credential_set, name)
+                for name in routed
+            }
         finally:
             db.close()
 
         port = get_proxy_port(cfg)
+        proxy_base = f"http://host.containers.internal:{port}"
         env: dict[str, str] = {}
 
         for name, route in proxy_routes.items():
             if name not in routed:
                 continue
             for env_var in route.phantom_env:
-                env[env_var] = phantom_token
+                env[env_var] = tokens[name]
             if route.base_url_env:
-                env[route.base_url_env] = (
-                    f"http://host.containers.internal:{port}/{route.route_prefix}"
-                )
+                env[route.base_url_env] = f"{proxy_base}/{route.route_prefix}"
 
         _logger.debug("Credential proxy: injected %d env vars for %s", len(env), stored_providers)
         return env
