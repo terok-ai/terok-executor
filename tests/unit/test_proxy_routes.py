@@ -1,11 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for credential proxy route parsing and routes.json generation."""
+"""Tests for credential proxy route parsing, routes.json, and CLI handlers."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from terok_agent.registry import get_registry
 
@@ -200,6 +204,142 @@ class TestScanLeakedCredentials:
             _handle_clean()
 
         assert "No leaked" in capsys.readouterr().out
+
+
+class TestProxyCommandHandlers:
+    """Verify proxy CLI command handlers."""
+
+    @patch("terok_sandbox.start_proxy")
+    @patch("terok_agent.proxy_commands._ensure_routes")
+    @patch("terok_sandbox.is_proxy_running", return_value=False)
+    def test_start_generates_routes_and_starts(self, _running, _routes, _start, capsys) -> None:
+        """start generates routes then starts the daemon."""
+        from terok_agent.proxy_commands import _handle_start
+
+        _handle_start()
+        _routes.assert_called_once()
+        _start.assert_called_once()
+        assert "started" in capsys.readouterr().out
+
+    @patch("terok_sandbox.is_proxy_running", return_value=True)
+    def test_start_already_running_exits(self, _running) -> None:
+        """start exits if proxy is already running."""
+        from terok_agent.proxy_commands import _handle_start
+
+        with pytest.raises(SystemExit):
+            _handle_start()
+
+    @patch("terok_sandbox.stop_proxy")
+    @patch("terok_sandbox.is_proxy_running", return_value=True)
+    def test_stop_stops_daemon(self, _running, _stop, capsys) -> None:
+        """stop calls stop_proxy when running."""
+        from terok_agent.proxy_commands import _handle_stop
+
+        _handle_stop()
+        _stop.assert_called_once()
+        assert "stopped" in capsys.readouterr().out
+
+    @patch("terok_sandbox.is_proxy_running", return_value=False)
+    def test_stop_not_running(self, _running, capsys) -> None:
+        """stop prints info when not running."""
+        from terok_agent.proxy_commands import _handle_stop
+
+        _handle_stop()
+        assert "not running" in capsys.readouterr().out
+
+    @patch("terok_agent.proxy_commands.scan_leaked_credentials", return_value=[])
+    @patch("terok_sandbox.SandboxConfig")
+    @patch("terok_sandbox.is_proxy_systemd_available", return_value=False)
+    @patch("terok_sandbox.get_proxy_status")
+    def test_status_prints_info(self, mock_status, _sd, _cfg, _scan, capsys) -> None:
+        """status prints formatted proxy info."""
+        mock_status.return_value = MagicMock(
+            mode="daemon",
+            running=True,
+            socket_path="/run/proxy.sock",
+            db_path="/data/creds.db",
+            routes_path="/data/routes.json",
+            routes_configured=3,
+            credentials_stored=("claude", "gh"),
+        )
+        from terok_agent.proxy_commands import _handle_status
+
+        _handle_status()
+        out = capsys.readouterr().out
+        assert "running" in out
+        assert "claude" in out
+
+    @patch("terok_sandbox.install_proxy_systemd")
+    @patch("terok_agent.proxy_commands._ensure_routes")
+    @patch("terok_sandbox.is_proxy_systemd_available", return_value=True)
+    def test_install_generates_routes_and_installs(self, _sd, _routes, _install, capsys) -> None:
+        """install generates routes then installs systemd units."""
+        from terok_agent.proxy_commands import _handle_install
+
+        _handle_install()
+        _routes.assert_called_once()
+        _install.assert_called_once()
+        assert "installed" in capsys.readouterr().out
+
+    @patch("terok_sandbox.is_proxy_systemd_available", return_value=False)
+    def test_install_no_systemd_exits(self, _sd) -> None:
+        """install exits when systemd unavailable."""
+        from terok_agent.proxy_commands import _handle_install
+
+        with pytest.raises(SystemExit):
+            _handle_install()
+
+    @patch("terok_sandbox.uninstall_proxy_systemd")
+    @patch("terok_sandbox.is_proxy_systemd_available", return_value=True)
+    def test_uninstall_removes_units(self, _sd, _uninstall, capsys) -> None:
+        """uninstall removes systemd units."""
+        from terok_agent.proxy_commands import _handle_uninstall
+
+        _handle_uninstall()
+        _uninstall.assert_called_once()
+        assert "removed" in capsys.readouterr().out
+
+    @patch("terok_sandbox.is_proxy_systemd_available", return_value=False)
+    def test_uninstall_no_systemd_exits(self, _sd) -> None:
+        """uninstall exits when systemd unavailable."""
+        from terok_agent.proxy_commands import _handle_uninstall
+
+        with pytest.raises(SystemExit):
+            _handle_uninstall()
+
+    @patch("terok_agent.proxy_commands._ensure_routes", return_value=Path("/tmp/routes.json"))
+    def test_routes_prints_path(self, _routes, capsys) -> None:
+        """routes prints the written path."""
+        from terok_agent.proxy_commands import _handle_routes
+
+        _handle_routes()
+        assert "routes.json" in capsys.readouterr().out
+
+    @patch(
+        "terok_agent.proxy_commands.scan_leaked_credentials",
+        return_value=[("claude", Path("/envs/_claude-config/.credentials.json"))],
+    )
+    @patch("terok_sandbox.SandboxConfig")
+    @patch("terok_sandbox.is_proxy_systemd_available", return_value=False)
+    @patch("terok_sandbox.get_proxy_status")
+    def test_status_shows_leak_warning(self, mock_status, _sd, _cfg, _scan, capsys) -> None:
+        """status shows WARNING when leaked credentials detected."""
+        mock_status.return_value = MagicMock(
+            mode="daemon",
+            running=True,
+            socket_path="/run/proxy.sock",
+            db_path="/data/creds.db",
+            routes_path="/data/routes.json",
+            routes_configured=3,
+            credentials_stored=("claude",),
+        )
+        from terok_agent.proxy_commands import _handle_status
+
+        _handle_status()
+        out = capsys.readouterr().out
+        assert "WARNING" in out
+        assert "claude" in out
+        assert "clean" in out
 
 
 class TestEnsureProxyRoutes:
