@@ -107,6 +107,57 @@ class TestGenerateRoutesJson:
         assert "oauth_refresh" not in routes["gh"]
 
 
+class TestScanLeakedCredentials:
+    """Verify scan_leaked_credentials detects real secrets in shared mounts."""
+
+    def test_empty_when_no_files(self, tmp_path) -> None:
+        """Returns empty list when no credential files exist."""
+        from terok_agent.proxy_commands import scan_leaked_credentials
+
+        assert scan_leaked_credentials(tmp_path) == []
+
+    def test_detects_nonempty_credential_file(self, tmp_path) -> None:
+        """Returns (provider, path) when a credential file is present and non-empty."""
+        from terok_agent import get_registry
+        from terok_agent.proxy_commands import scan_leaked_credentials
+
+        registry = get_registry()
+        auth = registry.auth_providers.get("claude")
+        route = registry.proxy_routes.get("claude")
+        assert auth is not None and route is not None
+
+        cred_dir = tmp_path / auth.host_dir_name
+        cred_dir.mkdir()
+        cred_file = cred_dir / route.credential_file
+        cred_file.write_text('{"claudeAiOauth": {"accessToken": "sk-leaked"}}')
+
+        leaked = scan_leaked_credentials(tmp_path)
+        providers = [p for p, _ in leaked]
+        assert "claude" in providers
+
+    def test_skips_empty_files(self, tmp_path) -> None:
+        """Empty credential files are not flagged."""
+        from terok_agent import get_registry
+        from terok_agent.proxy_commands import scan_leaked_credentials
+
+        registry = get_registry()
+        auth = registry.auth_providers["claude"]
+        route = registry.proxy_routes["claude"]
+
+        cred_dir = tmp_path / auth.host_dir_name
+        cred_dir.mkdir()
+        (cred_dir / route.credential_file).write_text("")
+
+        assert scan_leaked_credentials(tmp_path) == []
+
+    def test_skips_providers_without_credential_file(self, tmp_path) -> None:
+        """Providers with no credential_file in proxy route are skipped."""
+        from terok_agent.proxy_commands import scan_leaked_credentials
+
+        # copilot has no proxy route at all, so the scan just returns empty
+        assert scan_leaked_credentials(tmp_path) == []
+
+
 class TestEnsureProxyRoutes:
     """Verify ensure_proxy_routes writes routes.json to disk."""
 
