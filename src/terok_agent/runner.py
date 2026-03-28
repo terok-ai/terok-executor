@@ -107,16 +107,26 @@ class AgentRunner:
         return images.l1
 
     def _shared_mounts(self, envs_dir: Path) -> list[str]:
-        """Derive shared config volume mounts from the agent registry.
+        """Derive shared volume mounts from the agent registry.
 
-        Each registry entry with an ``auth.host_dir`` and ``auth.container_mount``
-        becomes a bind mount so that auth credentials persist across runs.
+        Includes both auth config mounts (per-provider) and general mounts
+        (e.g. OpenCode runtime dirs) from the ``mounts:`` YAML section.
         """
+        seen: set[str] = set()
         mounts = []
         for _name, ap in sorted(self.registry.auth_providers.items()):
             host_dir = envs_dir / ap.host_dir_name
             host_dir.mkdir(parents=True, exist_ok=True)
-            mounts.append(f"{host_dir}:{ap.container_mount}:z")
+            mount = f"{host_dir}:{ap.container_mount}:z"
+            if ap.host_dir_name not in seen:
+                mounts.append(mount)
+                seen.add(ap.host_dir_name)
+        for m in self.registry.mounts:
+            if m.host_dir not in seen:
+                host_dir = envs_dir / m.host_dir
+                host_dir.mkdir(parents=True, exist_ok=True)
+                mounts.append(f"{host_dir}:{m.container_path}:z")
+                seen.add(m.host_dir)
         return mounts
 
     def _setup_gate(self, repo_url: str, task_id: str) -> str:
