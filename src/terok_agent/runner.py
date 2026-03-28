@@ -566,7 +566,11 @@ class AgentRunner:
             )
             command = ["bash", "-lc", cmd_str]
         elif mode == "interactive":
-            command = ["bash", "-lc", "init-ssh-and-repo.sh && echo __CLI_READY__; exec bash -l"]
+            command = [
+                "bash",
+                "-lc",
+                "init-ssh-and-repo.sh && echo __CLI_READY__; tail -f /dev/null",
+            ]
         elif mode == "web":
             toad_cmd = "init-ssh-and-repo.sh && toad --serve -H 0.0.0.0 -p 8080"
             if public_url:
