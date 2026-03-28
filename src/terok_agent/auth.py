@@ -316,36 +316,11 @@ def _write_vibe_proxy_config(cfg: object, auth_info: AuthProvider, proxy_base: s
         existing["providers"] = providers
 
     # Write back as TOML
+    import tomli_w
+
     shared_dir.mkdir(parents=True, exist_ok=True)
-    _write_toml(config_path, existing)
+    config_path.write_bytes(tomli_w.dumps(existing).encode())
     print(f"Proxy base URL written to {config_path}")
-
-
-def _write_toml(path: Path, data: dict) -> None:
-    """Write a dict as TOML (minimal writer for flat + array-of-tables)."""
-    lines: list[str] = []
-    for k, v in data.items():
-        if k == "providers":
-            continue  # handled below as array-of-tables
-        if isinstance(v, str):
-            lines.append(f'{k} = "{v}"')
-        elif isinstance(v, bool):
-            lines.append(f"{k} = {'true' if v else 'false'}")
-        elif isinstance(v, (int, float)):
-            lines.append(f"{k} = {v}")
-
-    for provider in data.get("providers", []):
-        lines.append("")
-        lines.append("[[providers]]")
-        for pk, pv in provider.items():
-            if isinstance(pv, str):
-                lines.append(f'{pk} = "{pv}"')
-            elif isinstance(pv, bool):
-                lines.append(f"{pk} = {'true' if pv else 'false'}")
-            elif isinstance(pv, (int, float)):
-                lines.append(f"{pk} = {pv}")
-
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def store_api_key(
