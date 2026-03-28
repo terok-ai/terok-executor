@@ -239,7 +239,6 @@ class AgentRunner:
 
         if exit_code != 0:
             print(f"Agent exited with code {exit_code}")
-        print(f"Container: {cname}")
 
     def _base_env(self, task_id: str, provider_name: str) -> dict[str, str]:
         """Assemble the base environment variables for a container."""
