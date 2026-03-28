@@ -158,25 +158,27 @@ class AgentRunner:
         token = self.sandbox.create_token(repo_key, task_id)
         return self.sandbox.gate_url(gate_path, token)
 
-    def _credential_proxy_env_and_volumes(
-        self, task_id: str
-    ) -> tuple[dict[str, str], list[str]]:
-        """Inject phantom tokens and proxy socket mount if the proxy is running.
+    def _credential_proxy_env(self, task_id: str) -> dict[str, str]:
+        """Inject phantom tokens and base URL overrides if the proxy is running.
 
         Unlike terok (which hard-fails when the proxy is down), the standalone
         runner silently skips proxy integration — credentials may come from
         shared config mounts instead.
+
+        The proxy listens on a TCP port on the host; containers reach it via
+        ``host.containers.internal:<port>`` (same pattern as the gate server).
         """
         from terok_sandbox import (
             CredentialDB,
             SandboxConfig,
+            get_proxy_port,
             is_proxy_running,
             is_proxy_socket_active,
         )
 
         cfg = SandboxConfig()
         if not (is_proxy_socket_active() or is_proxy_running(cfg)):
-            return {}, []
+            return {}
 
         db = CredentialDB(cfg.proxy_db_path)
         try:
@@ -187,10 +189,10 @@ class AgentRunner:
             db.close()
 
         if not stored_providers:
-            return {}, []
+            return {}
 
+        port = get_proxy_port(cfg)
         env: dict[str, str] = {}
-        volumes = [f"{cfg.proxy_socket_path}:/run/terok/credential-proxy.sock:z"]
 
         for name, route in self.registry.proxy_routes.items():
             if name not in stored_providers:
@@ -199,11 +201,11 @@ class AgentRunner:
                 env[env_var] = phantom_token
             if route.base_url_env:
                 env[route.base_url_env] = (
-                    f"http+unix:///run/terok/credential-proxy.sock/{route.route_prefix}"
+                    f"http://host.containers.internal:{port}/{route.route_prefix}"
                 )
 
         _logger.debug("Credential proxy: injected %d env vars for %s", len(env), stored_providers)
-        return env, volumes
+        return env
 
     def _base_env(self, task_id: str, provider_name: str) -> dict[str, str]:
         """Assemble the base environment variables for a container."""
@@ -487,9 +489,7 @@ class AgentRunner:
         volumes += self._shared_mounts(envs_dir)
 
         # Credential proxy: inject phantom tokens and base URL overrides
-        proxy_env, proxy_volumes = self._credential_proxy_env_and_volumes(task_id)
-        env.update(proxy_env)
-        volumes += proxy_volumes
+        env.update(self._credential_proxy_env(task_id))
 
         # Agent config mount
         volumes.append(f"{agent_config_dir}:/home/dev/.terok:Z")
