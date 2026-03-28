@@ -324,6 +324,7 @@ fi
 # gh routes all API traffic through http_unix_socket (set in config.yml).
 # The socat bridge pipes that socket to the TCP proxy on the host.
 if [[ -n "${TEROK_PROXY_PORT:-}" ]] && [[ -n "${GH_TOKEN:-}" ]] && command -v socat >/dev/null 2>&1; then
+  rm -f /tmp/terok-gh-proxy.sock
   socat UNIX-LISTEN:/tmp/terok-gh-proxy.sock,fork TCP:host.containers.internal:"${TEROK_PROXY_PORT}" &
   echo ">> gh proxy bridge started (socat PID: $!)"
 fi

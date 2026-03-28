@@ -71,7 +71,7 @@ their SDK supports:
 
 | Agent | How it reaches the proxy | Notes |
 |-------|-------------------------|-------|
-| **Claude** | `ANTHROPIC_BASE_URL=http://host.containers.internal:18731` | Anthropic SDK respects this env var |
+| **Claude** | `ANTHROPIC_BASE_URL=http://host.containers.internal:<proxy_port> (default: 18731)` | Anthropic SDK respects this env var |
 | **Codex** | `OPENAI_BASE_URL=http://host.containers.internal:18731` | OpenAI SDK respects this env var (deprecated in Codex v0.117, needs config.toml) |
 | **Vibe** | `config.toml` with `api_base` in shared `~/.vibe` mount | Mistral SDK ignores URL path in api_base, only uses host:port. Written by `shared_config_patch` in YAML |
 | **KISSKI** | `TEROK_OC_KISSKI_BASE_URL` env var override | OpenCode reads this; overridden from the real upstream to proxy |
@@ -117,7 +117,7 @@ shared_config_patch:
   yaml_set: {http_unix_socket: "/tmp/terok-gh-proxy.sock"}
 ```
 
-The patch is applied after auth (`_write_proxy_config` in `auth.py`).
+The patch is applied after auth (`write_proxy_config() in proxy_config.py`).
 Only non-secret values (URLs, socket paths) are written to shared mounts.
 
 ## Agent YAML Registry
@@ -171,7 +171,7 @@ Prompts for an API key on the terminal. No container needed.
 
 ### Post-auth config patching
 
-After storing credentials, `_write_proxy_config()` applies any
+After storing credentials, `write_proxy_config()` applies any
 `shared_config_patch` from the YAML registry. This writes proxy URLs
 (not secrets) to the provider's shared config mount.
 
