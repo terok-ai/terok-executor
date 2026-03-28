@@ -280,7 +280,7 @@ def _write_proxy_config(provider_name: str) -> None:
 
     cfg = SandboxConfig()
     port = get_proxy_port(cfg)
-    proxy_base = f"http://host.containers.internal:{port}/{route.route_prefix}/v1"
+    proxy_base = f"http://host.containers.internal:{port}/{route.route_prefix}"
 
     # Provider-specific config writers
     if provider_name == "vibe":
