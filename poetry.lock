@@ -2234,18 +2234,19 @@ description = "Hardened Podman container runner with gate server and shield inte
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = [
-    {file = "terok_sandbox-0.0.16-py3-none-any.whl", hash = "sha256:4d81c43603ba9986b43f6c49858f13b42859645c6565eb47fc82c02e6d2c4fc2"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 aiohttp = ">=3.9"
 platformdirs = ">=4.0"
-terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.4.1/terok_shield-0.4.1-py3-none-any.whl"}
+terok-shield = {git = "https://github.com/sliwowitz/terok-shield.git", rev = "132b71fa2ebf98887a0ce21fb3a365a5897f4da3"}
 
 [package.source]
-type = "url"
-url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.16/terok_sandbox-0.0.16-py3-none-any.whl"
+type = "git"
+url = "https://github.com/terok-ai/terok-sandbox.git"
+reference = "1562037aa79f7b11c411dcf7d0bbc29c48ad80cd"
+resolved_reference = "1562037aa79f7b11c411dcf7d0bbc29c48ad80cd"
 
 [[package]]
 name = "terok-shield"
@@ -2254,16 +2255,17 @@ description = "nftables-based egress firewalling for Podman containers"
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = [
-    {file = "terok_shield-0.4.1-py3-none-any.whl", hash = "sha256:6257cb0e619d3965998dac68e4413580c5c2de5f2136a1f319374c2589fec9c7"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 PyYAML = ">=6.0"
 
 [package.source]
-type = "url"
-url = "https://github.com/terok-ai/terok-shield/releases/download/v0.4.1/terok_shield-0.4.1-py3-none-any.whl"
+type = "git"
+url = "https://github.com/sliwowitz/terok-shield.git"
+reference = "132b71fa2ebf98887a0ce21fb3a365a5897f4da3"
+resolved_reference = "132b71fa2ebf98887a0ce21fb3a365a5897f4da3"
 
 [[package]]
 name = "tomli"
@@ -2630,4 +2632,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "0bc6a46c2d1a16192d17faf568d1ce9265aed1d85d810c7d107b91e556c3dfc6"
+content-hash = "60bdc8f78afb0d0ea2bd6c5d2d0e8a10f94bdbc376bb7d8063bd074a96b41b86"
