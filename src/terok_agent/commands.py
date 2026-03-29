@@ -50,9 +50,9 @@ def _handle_agents(*, show_all: bool = False) -> None:
     """List registered agents."""
     import sys
 
-    from .registry import _load_bundled_agents, _load_user_agents, get_registry
+    from .roster import _load_bundled_agents, _load_user_agents, get_roster
 
-    reg = get_registry()
+    reg = get_roster()
     names = reg.all_names if show_all else reg.agent_names
 
     if not names:
