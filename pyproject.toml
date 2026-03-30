@@ -24,7 +24,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
-terok-sandbox = {git = "https://github.com/sliwowitz/terok-sandbox.git", rev = "5b25a1d8dde769c41ca2e56d706075da0071ea97"}
+terok-sandbox = {git = "https://github.com/sliwowitz/terok-sandbox.git", rev = "456a50d6e164140e5f7c44f74d3efcc7241720a6"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"

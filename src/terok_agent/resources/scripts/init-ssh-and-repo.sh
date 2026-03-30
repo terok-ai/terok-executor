@@ -23,17 +23,7 @@ set -euo pipefail
 # The proxy holds private keys on the host and signs on behalf of the container.
 if [[ -n "${TEROK_SSH_AGENT_PORT:-}" ]] && [[ -n "${TEROK_SSH_AGENT_TOKEN:-}" ]] && command -v socat >/dev/null 2>&1; then
   rm -f /tmp/ssh-agent.sock
-  cat > /tmp/ssh-agent-bridge.sh << 'BRIDGE_EOF'
-#!/bin/bash
-# Send length-prefixed phantom token then proxy bidirectionally
-TOKEN="${TEROK_SSH_AGENT_TOKEN}"
-LEN=${#TOKEN}
-printf "\x$(printf '%02x' $(((LEN>>24)&0xFF)))\x$(printf '%02x' $(((LEN>>16)&0xFF)))\x$(printf '%02x' $(((LEN>>8)&0xFF)))\x$(printf '%02x' $((LEN&0xFF)))%s" "$TOKEN"
-exec cat
-BRIDGE_EOF
-  chmod +x /tmp/ssh-agent-bridge.sh
-  socat UNIX-LISTEN:/tmp/ssh-agent.sock,fork \
-    "EXEC:/tmp/ssh-agent-bridge.sh!!TCP:host.containers.internal:${TEROK_SSH_AGENT_PORT}" &
+  socat "UNIX-LISTEN:/tmp/ssh-agent.sock,fork" "SYSTEM:ssh-agent-bridge.sh" &
   export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
   # Persist for shells spawned after init (exec bash, podman exec, agent subshells).
   # Sourced by terok-env.sh on every shell startup.
