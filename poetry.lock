@@ -2413,44 +2413,42 @@ tomli-w = ">=1.0,<2.0"
 
 [[package]]
 name = "terok-sandbox"
-version = "0.0.0.post69.dev0+58b2138"
+version = "0.0.19"
 description = "Hardened Podman container runner with gate server and shield integration"
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "terok_sandbox-0.0.19-py3-none-any.whl", hash = "sha256:304b7eddd4db73dd44bdea421299fe3ae7825aedd25db4dc723518cf2a82f324"},
+]
 
 [package.dependencies]
 aiohttp = ">=3.9"
 cryptography = ">=43.0"
 platformdirs = ">=4.0"
-terok-shield = {git = "https://github.com/sliwowitz/terok-shield.git", rev = "d2a9dd84f2389594730ac163b264028894e2c0ed"}
+terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.5.1/terok_shield-0.5.1-py3-none-any.whl"}
 
 [package.source]
-type = "git"
-url = "https://github.com/sliwowitz/terok-sandbox.git"
-reference = "58b2138c57511665c9522bd2a3def69d7dac2f0b"
-resolved_reference = "58b2138c57511665c9522bd2a3def69d7dac2f0b"
+type = "url"
+url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.19/terok_sandbox-0.0.19-py3-none-any.whl"
 
 [[package]]
 name = "terok-shield"
-version = "0.0.0.post101.dev0+d2a9dd8"
+version = "0.5.1"
 description = "nftables-based egress firewalling for Podman containers"
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "terok_shield-0.5.1-py3-none-any.whl", hash = "sha256:9b41059a932cdd4fa4539a8345dd4bfb449ce0d116e5beaec4a2842dc1dc26b4"},
+]
 
 [package.dependencies]
 PyYAML = ">=6.0"
 
 [package.source]
-type = "git"
-url = "https://github.com/sliwowitz/terok-shield.git"
-reference = "d2a9dd84f2389594730ac163b264028894e2c0ed"
-resolved_reference = "d2a9dd84f2389594730ac163b264028894e2c0ed"
+type = "url"
+url = "https://github.com/terok-ai/terok-shield/releases/download/v0.5.1/terok_shield-0.5.1-py3-none-any.whl"
 
 [[package]]
 name = "tomli"
@@ -2817,4 +2815,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "0119469536f507ff7f1fa98ecfeee955c2d025f65ba94150020010b9138de760"
+content-hash = "c114e4935b112666c4a6ee4fd71249169707e9e7de96fd90e7aa6c68c4674e88"
