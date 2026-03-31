@@ -68,6 +68,15 @@ glab() {
   )
 }
 
+# ── SSH agent ─────────────────────────────────────────────────────────────────
+
+# Export SSH_AUTH_SOCK when the bridge socket exists; unset if it's gone.
+if [[ -S /tmp/ssh-agent.sock ]]; then
+  export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+elif [[ "${SSH_AUTH_SOCK:-}" == "/tmp/ssh-agent.sock" ]]; then
+  unset SSH_AUTH_SOCK
+fi
+
 # ── Per-project agent wrappers ────────────────────────────────────────────────
 
 # Source per-task agent wrappers via the L1 symlink to the bind-mounted
