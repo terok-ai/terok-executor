@@ -18,7 +18,7 @@ class TestProxyRoutesParsed:
     """Verify credential_proxy YAML sections are parsed into the roster."""
 
     def test_claude_route_exists(self) -> None:
-        """Claude has a proxy route with Anthropic upstream."""
+        """Claude has a proxy route with Anthropic upstream and OAuth support."""
         reg = get_roster()
         route = reg.proxy_routes.get("claude")
         assert route is not None
@@ -26,7 +26,10 @@ class TestProxyRoutesParsed:
         assert route.upstream == "https://api.anthropic.com"
         assert route.auth_header == "dynamic"
         assert "ANTHROPIC_API_KEY" in route.phantom_env
+        assert "CLAUDE_CODE_OAUTH_TOKEN" in route.oauth_phantom_env
         assert route.base_url_env == "ANTHROPIC_BASE_URL"
+        assert route.socket_path == "/tmp/terok-claude-proxy.sock"
+        assert route.socket_env == "ANTHROPIC_UNIX_SOCKET"
 
     def test_codex_route_exists(self) -> None:
         """Codex has a proxy route with OpenAI upstream."""
@@ -49,6 +52,14 @@ class TestProxyRoutesParsed:
         assert route.auth_header == "PRIVATE-TOKEN"
         assert route.auth_prefix == ""
         assert route.route_prefix == "gl"
+
+    def test_api_key_only_providers_have_no_oauth_phantom_env(self) -> None:
+        """Providers without OAuth support have empty oauth_phantom_env."""
+        for name in ("vibe", "blablador", "kisski"):
+            route = get_roster().proxy_routes.get(name)
+            assert route is not None, f"{name} missing proxy route"
+            assert route.oauth_phantom_env == {}, f"{name} should have no oauth_phantom_env"
+            assert route.socket_path == "", f"{name} should have no socket_path"
 
     def test_opencode_agents_have_routes(self) -> None:
         """Blablador and KISSKI have proxy routes."""

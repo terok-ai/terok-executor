@@ -261,10 +261,23 @@ class CredentialProxyRoute:
     """Credential file path relative to the auth mount."""
 
     phantom_env: dict[str, bool] = field(default_factory=dict)
-    """Phantom API key env vars to inject (e.g. ``{"ANTHROPIC_API_KEY": true}``)."""
+    """Phantom env vars for API-key credentials (e.g. ``{"ANTHROPIC_API_KEY": true}``)."""
+
+    oauth_phantom_env: dict[str, bool] = field(default_factory=dict)
+    """Phantom env vars for OAuth credentials (e.g. ``{"CLAUDE_CODE_OAUTH_TOKEN": true}``).
+
+    When the stored credential type is ``"oauth"`` and this is non-empty, these
+    env vars are injected *instead of* :attr:`phantom_env`.
+    """
 
     base_url_env: str = ""
     """Env var to override with proxy URL (e.g. ``"ANTHROPIC_BASE_URL"``)."""
+
+    socket_path: str = ""
+    """Unix socket path for socat bridge (e.g. ``"/tmp/terok-claude-proxy.sock"``)."""
+
+    socket_env: str = ""
+    """Env var that receives :attr:`socket_path` (e.g. ``"ANTHROPIC_UNIX_SOCKET"``)."""
 
     shared_config_patch: dict | None = None
     """Optional shared config patch applied after auth (e.g. Vibe's config.toml)."""
@@ -304,7 +317,10 @@ def _to_proxy_route(name: str, data: dict) -> CredentialProxyRoute | None:
         credential_type=cp.get("credential_type", "api_key"),
         credential_file=cp.get("credential_file", ""),
         phantom_env=cp.get("phantom_env", {}),
+        oauth_phantom_env=cp.get("oauth_phantom_env", {}),
         base_url_env=cp.get("base_url_env", ""),
+        socket_path=cp.get("socket_path", ""),
+        socket_env=cp.get("socket_env", ""),
         shared_config_patch=cp.get("shared_config_patch"),
         oauth_refresh=_validated_oauth_refresh(name, cp.get("oauth_refresh")),
     )
