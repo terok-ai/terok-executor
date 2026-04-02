@@ -60,6 +60,7 @@ class TestProxyRoutesParsed:
             assert route is not None, f"{name} missing proxy route"
             assert route.oauth_phantom_env == {}, f"{name} should have no oauth_phantom_env"
             assert route.socket_path == "", f"{name} should have no socket_path"
+            assert route.socket_env == "", f"{name} should have no socket_env"
 
     def test_opencode_agents_have_routes(self) -> None:
         """Blablador and KISSKI have proxy routes."""

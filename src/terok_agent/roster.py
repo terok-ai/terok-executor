@@ -308,6 +308,12 @@ def _to_proxy_route(name: str, data: dict) -> CredentialProxyRoute | None:
     for required in ("route_prefix", "upstream"):
         if required not in cp:
             raise ValueError(f"Agent {name!r}: credential_proxy missing required key {required!r}")
+    socket_path = cp.get("socket_path", "")
+    socket_env = cp.get("socket_env", "")
+    if bool(socket_path) != bool(socket_env):
+        raise ValueError(
+            f"Agent {name!r}: credential_proxy requires both 'socket_path' and 'socket_env' together"
+        )
     return CredentialProxyRoute(
         provider=name,
         route_prefix=cp["route_prefix"],
@@ -319,8 +325,8 @@ def _to_proxy_route(name: str, data: dict) -> CredentialProxyRoute | None:
         phantom_env=cp.get("phantom_env", {}),
         oauth_phantom_env=cp.get("oauth_phantom_env", {}),
         base_url_env=cp.get("base_url_env", ""),
-        socket_path=cp.get("socket_path", ""),
-        socket_env=cp.get("socket_env", ""),
+        socket_path=socket_path,
+        socket_env=socket_env,
         shared_config_patch=cp.get("shared_config_patch"),
         oauth_refresh=_validated_oauth_refresh(name, cp.get("oauth_refresh")),
     )
