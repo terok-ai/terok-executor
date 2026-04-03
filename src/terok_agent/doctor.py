@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from terok_sandbox.doctor import CheckVerdict, DoctorCheck
 
@@ -124,8 +125,12 @@ def _make_credential_file_checks(roster: AgentRoster) -> list[DoctorCheck]:
             def _eval(rc: int, stdout: str, stderr: str) -> CheckVerdict:
                 """Check if file contains phantom tokens or real secrets."""
                 if rc != 0:
-                    # File doesn't exist — that's fine
-                    return CheckVerdict("ok", f"{pname}: no credential file (clean)")
+                    if re.search(r"no such file", stderr, re.IGNORECASE):
+                        return CheckVerdict("ok", f"{pname}: no credential file (clean)")
+                    return CheckVerdict(
+                        "warn",
+                        f"{pname}: cannot read {cpath} — {stderr.strip() or 'unknown error'}",
+                    )
                 content = stdout.strip()
                 if not content:
                     return CheckVerdict("ok", f"{pname}: credential file empty")
@@ -231,7 +236,7 @@ def _make_base_url_checks(roster: AgentRoster, proxy_port: int) -> list[DoctorCh
                 val = stdout.strip()
                 if not val:
                     return CheckVerdict("warn", f"{env_var}: not set — proxy bypass possible")
-                if host in val:
+                if urlparse(val).netloc == host:
                     return CheckVerdict("ok", f"{env_var}: routed through proxy ({pname})")
                 return CheckVerdict(
                     "error",

@@ -82,9 +82,17 @@ class TestCredentialFileChecks:
         roster = get_roster()
         checks = _make_credential_file_checks(roster)
         if checks:
-            # rc != 0 means file doesn't exist
-            verdict = checks[0].evaluate(1, "", "No such file")
+            # rc != 0 with "No such file" stderr means file doesn't exist
+            verdict = checks[0].evaluate(1, "", "cat: /path: No such file or directory\n")
             assert verdict.severity == "ok"
+
+    def test_warn_on_permission_denied(self) -> None:
+        roster = get_roster()
+        checks = _make_credential_file_checks(roster)
+        if checks:
+            verdict = checks[0].evaluate(1, "", "cat: /path: Permission denied\n")
+            assert verdict.severity == "warn"
+            assert "Permission denied" in verdict.detail
 
     def test_error_on_real_key(self) -> None:
         roster = get_roster()
@@ -134,8 +142,8 @@ class TestPhantomTokenChecks:
         roster = get_roster()
         checks = _make_phantom_token_checks(roster)
         if checks:
-            # rc=1 from printenv means var is unset, but stdout is empty
-            verdict = checks[0].evaluate(0, "", "")
+            # rc=1 from printenv means var is unset
+            verdict = checks[0].evaluate(1, "", "")
             assert verdict.severity == "warn"
 
     def test_no_duplicate_env_vars(self) -> None:
