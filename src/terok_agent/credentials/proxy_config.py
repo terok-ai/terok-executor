@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Post-auth shared config patching for the credential proxy.
+"""Patches provider config files to route API traffic through the credential proxy.
 
 Applies ``shared_config_patch`` from the YAML roster after authentication.
 Writes proxy URLs (not secrets) to provider config files so that agents

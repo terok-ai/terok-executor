@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""YAML-driven agent and tool roster.
+"""Loads agent and tool definitions from YAML and assembles them into a queryable roster.
 
 Loads per-agent definition files from bundled package resources and optional
 user extensions, deserializes them into the existing dataclass types, and
@@ -38,17 +38,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _USER_AGENTS_DIR_NAME = "agents"
-
-
-def _user_agents_dir() -> Path:
-    """Return ``~/.config/terok/agent/agents/``."""
-    from terok_agent.paths import _SUBDIR, _UMBRELLA
-
-    try:
-        from platformdirs import user_config_dir
-    except ImportError:  # pragma: no cover
-        return Path.home() / ".config" / _UMBRELLA / _SUBDIR / _USER_AGENTS_DIR_NAME
-    return Path(user_config_dir(_UMBRELLA)) / _SUBDIR / _USER_AGENTS_DIR_NAME
 
 
 # ── Domain model ──────────────────────────────────────────────────────────
@@ -156,6 +145,8 @@ class AgentRoster:
     _agent_names: tuple[str, ...] = ()
     _all_names: tuple[str, ...] = ()
 
+    # ── Properties ──
+
     @property
     def providers(self) -> dict[str, HeadlessProvider]:
         """All headless agent providers (``kind: agent`` only)."""
@@ -165,6 +156,16 @@ class AgentRoster:
     def auth_providers(self) -> dict[str, AuthProvider]:
         """All auth providers (agents + tools with ``auth:`` section)."""
         return dict(self._auth_providers)
+
+    @property
+    def proxy_routes(self) -> dict[str, CredentialProxyRoute]:
+        """All credential proxy routes, keyed by provider name."""
+        return dict(self._proxy_routes)
+
+    @property
+    def sidecar_specs(self) -> dict[str, SidecarSpec]:
+        """All sidecar tool specs, keyed by tool name."""
+        return dict(self._sidecar_specs)
 
     @property
     def agent_names(self) -> tuple[str, ...]:
@@ -184,6 +185,8 @@ class AgentRoster:
         directory, only one entry is returned.
         """
         return self._mounts
+
+    # ── Keyed lookups ──
 
     def get_provider(
         self, name: str | None, *, default_agent: str | None = None
@@ -211,11 +214,6 @@ class AgentRoster:
             raise SystemExit(f"Unknown auth provider: {name!r}. Available: {available}")
         return info
 
-    @property
-    def sidecar_specs(self) -> dict[str, SidecarSpec]:
-        """All sidecar tool specs, keyed by tool name."""
-        return dict(self._sidecar_specs)
-
     def get_sidecar_spec(self, name: str) -> SidecarSpec:
         """Look up a sidecar spec by tool name.
 
@@ -227,10 +225,7 @@ class AgentRoster:
             raise SystemExit(f"No sidecar config for {name!r}. Available: {available}")
         return spec
 
-    @property
-    def proxy_routes(self) -> dict[str, CredentialProxyRoute]:
-        """All credential proxy routes, keyed by provider name."""
-        return dict(self._proxy_routes)
+    # ── Domain operations ──
 
     def generate_routes_json(self) -> str:
         """Generate the ``routes.json`` content for the credential proxy server.
@@ -416,6 +411,17 @@ def ensure_proxy_routes(cfg: SandboxConfig | None = None) -> Path:
 
 
 # ── YAML loading ──────────────────────────────────────────────────────────
+
+
+def _user_agents_dir() -> Path:
+    """Return ``~/.config/terok/agent/agents/``."""
+    from terok_agent.paths import _SUBDIR, _UMBRELLA
+
+    try:
+        from platformdirs import user_config_dir
+    except ImportError:  # pragma: no cover
+        return Path.home() / ".config" / _UMBRELLA / _SUBDIR / _USER_AGENTS_DIR_NAME
+    return Path(user_config_dir(_UMBRELLA)) / _SUBDIR / _USER_AGENTS_DIR_NAME
 
 
 def _load_yaml(text: str) -> dict:

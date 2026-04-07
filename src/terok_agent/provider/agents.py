@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Agent configuration: parsing, filtering, and wrapper generation.
+"""Prepares agent config directories with wrappers, instructions, and sub-agent definitions.
 
-Handles .md frontmatter parsing, sub-agent JSON conversion for Claude's
-``--agents`` flag, and the ``terok-agent.sh`` wrapper function that
+Parses .md frontmatter for sub-agent definitions, converts them to Claude's
+``--agents`` JSON format, and generates the ``terok-agent.sh`` wrapper that
 sets up git identity and CLI flags inside task containers.
 """
 
@@ -265,6 +265,73 @@ def _subagents_to_json(
     return json.dumps(result)
 
 
+def _inject_opencode_instructions(config_path: Path) -> None:
+    """Inject the instructions file path into an opencode.json config.
+
+    Ensures the ``"instructions"`` key is a list containing the container-local
+    path ``"/home/dev/.terok/instructions.md"``.  If the file does not exist it
+    is created with the required ``$schema`` key.  If the instructions entry is already present the
+    file is left untouched (idempotent).
+
+    Uses the same inter-process file lock + atomic-replace pattern as
+    :func:`_write_session_hook` for concurrency safety.
+    """
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - fcntl is unavailable on some platforms.
+        fcntl = None  # type: ignore[assignment]
+
+    instr_path = "/home/dev/.terok/instructions.md"
+    _SCHEMA_URL = "https://opencode.ai/config.json"
+
+    lock_path = config_path.with_suffix(config_path.suffix + ".lock")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            if config_path.is_file():
+                try:
+                    loaded = json.loads(config_path.read_text(encoding="utf-8"))
+                    existing = loaded if isinstance(loaded, dict) else {}
+                except (json.JSONDecodeError, OSError):
+                    existing = {}
+            else:
+                existing = {}
+
+            # Ensure the $schema key is always present for a valid opencode.json.
+            schema_added = "$schema" not in existing
+            existing.setdefault("$schema", _SCHEMA_URL)
+
+            instructions = existing.get("instructions")
+            if isinstance(instructions, list) and instr_path in instructions:
+                if not schema_added:
+                    return  # fully up-to-date, nothing to write
+            elif isinstance(instructions, list):
+                instructions.append(instr_path)
+            else:
+                existing["instructions"] = [instr_path]
+
+            tmp_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    "w",
+                    encoding="utf-8",
+                    dir=config_path.parent,
+                    delete=False,
+                ) as tmp_file:
+                    tmp_file.write(json.dumps(existing, indent=2) + "\n")
+                    tmp_path = Path(tmp_file.name)
+                os.replace(tmp_path, config_path)
+            finally:
+                if tmp_path is not None and tmp_path.exists():
+                    tmp_path.unlink()
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def _generate_claude_wrapper(cfg: WrapperConfig) -> str:
     """Generate the terok-agent.sh wrapper function content for Claude.
 
@@ -459,73 +526,6 @@ def _write_session_hook(settings_path: Path) -> None:
                 finally:
                     if tmp_path is not None and tmp_path.exists():
                         tmp_path.unlink()
-        finally:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-
-
-def _inject_opencode_instructions(config_path: Path) -> None:
-    """Inject the instructions file path into an opencode.json config.
-
-    Ensures the ``"instructions"`` key is a list containing the container-local
-    path ``"/home/dev/.terok/instructions.md"``.  If the file does not exist it
-    is created with the required ``$schema`` key.  If the instructions entry is already present the
-    file is left untouched (idempotent).
-
-    Uses the same inter-process file lock + atomic-replace pattern as
-    :func:`_write_session_hook` for concurrency safety.
-    """
-    try:
-        import fcntl
-    except ImportError:  # pragma: no cover - fcntl is unavailable on some platforms.
-        fcntl = None  # type: ignore[assignment]
-
-    instr_path = "/home/dev/.terok/instructions.md"
-    _SCHEMA_URL = "https://opencode.ai/config.json"
-
-    lock_path = config_path.with_suffix(config_path.suffix + ".lock")
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with lock_path.open("a+", encoding="utf-8") as lock_file:
-        if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            if config_path.is_file():
-                try:
-                    loaded = json.loads(config_path.read_text(encoding="utf-8"))
-                    existing = loaded if isinstance(loaded, dict) else {}
-                except (json.JSONDecodeError, OSError):
-                    existing = {}
-            else:
-                existing = {}
-
-            # Ensure the $schema key is always present for a valid opencode.json.
-            schema_added = "$schema" not in existing
-            existing.setdefault("$schema", _SCHEMA_URL)
-
-            instructions = existing.get("instructions")
-            if isinstance(instructions, list) and instr_path in instructions:
-                if not schema_added:
-                    return  # fully up-to-date, nothing to write
-            elif isinstance(instructions, list):
-                instructions.append(instr_path)
-            else:
-                existing["instructions"] = [instr_path]
-
-            tmp_path: Path | None = None
-            try:
-                with tempfile.NamedTemporaryFile(
-                    "w",
-                    encoding="utf-8",
-                    dir=config_path.parent,
-                    delete=False,
-                ) as tmp_file:
-                    tmp_file.write(json.dumps(existing, indent=2) + "\n")
-                    tmp_path = Path(tmp_file.name)
-                os.replace(tmp_path, config_path)
-            finally:
-                if tmp_path is not None and tmp_path.exists():
-                    tmp_path.unlink()
         finally:
             if fcntl is not None:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

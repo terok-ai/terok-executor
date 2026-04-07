@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2025 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Agent instruction resolution: layered merging with bundled defaults.
+"""Resolves agent instructions from layered config with bundled defaults.
 
-Resolves the ``instructions`` config key from the merged agent-config dict,
-supporting flat strings, per-provider dicts, and lists with ``_inherit``
+Supports flat strings, per-provider dicts, and lists with ``_inherit``
 splicing.  Falls back to a bundled default that describes the standard
 container environment.
 
@@ -27,34 +26,7 @@ from typing import Any
 _INHERIT_SENTINEL = "_inherit"
 
 
-def bundled_default_instructions() -> str:
-    """Read and return the bundled default instructions from package resources."""
-    ref = importlib.resources.files("terok_agent.resources.instructions").joinpath("default.md")
-    return ref.read_text(encoding="utf-8")
-
-
-def _read_instructions_file(project_root: Path | None) -> str:
-    """Read standalone instructions.md from project root, returning empty string if absent."""
-    if project_root is None:
-        return ""
-    path = project_root / "instructions.md"
-    if not path.is_file():
-        return ""
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeDecodeError):
-        return ""
-
-
-def _splice_inherit(items: list, default: str) -> str:
-    """Join list items, replacing ``_inherit`` sentinels with the bundled default."""
-    parts: list[str] = []
-    for item in items:
-        if item == _INHERIT_SENTINEL:
-            parts.append(default)
-        else:
-            parts.append(str(item))
-    return "\n\n".join(parts)
+# ── Public API ───────────────────────────────────────────────────────────
 
 
 def resolve_instructions(
@@ -119,3 +91,36 @@ def has_custom_instructions(
     if config.get("instructions") is not None:
         return True
     return bool(project_root and (project_root / "instructions.md").is_file())
+
+
+def bundled_default_instructions() -> str:
+    """Read and return the bundled default instructions from package resources."""
+    ref = importlib.resources.files("terok_agent.resources.instructions").joinpath("default.md")
+    return ref.read_text(encoding="utf-8")
+
+
+# ── Private helpers ──────────────────────────────────────────────────────
+
+
+def _read_instructions_file(project_root: Path | None) -> str:
+    """Read standalone instructions.md from project root, returning empty string if absent."""
+    if project_root is None:
+        return ""
+    path = project_root / "instructions.md"
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _splice_inherit(items: list, default: str) -> str:
+    """Join list items, replacing ``_inherit`` sentinels with the bundled default."""
+    parts: list[str] = []
+    for item in items:
+        if item == _INHERIT_SENTINEL:
+            parts.append(default)
+        else:
+            parts.append(str(item))
+    return "\n\n".join(parts)

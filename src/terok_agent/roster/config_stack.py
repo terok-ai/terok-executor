@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Generic layered config resolution.
+"""Resolves layered configuration by deep-merging ordered scopes.
 
 Domain-agnostic: no terok service dependencies.
 
@@ -21,80 +21,10 @@ from pathlib import Path
 from terok_agent._util import yaml_load as _yaml_load
 
 # ---------------------------------------------------------------------------
-# Merge helpers
+# Vocabulary
 # ---------------------------------------------------------------------------
 
 _INHERIT = "_inherit"
-
-
-def deep_merge(base: dict, override: dict) -> dict:
-    """Recursively merge *override* into *base*, returning a **new** dict.
-
-    Rules
-    -----
-    * Dicts are merged recursively by default.
-    * A ``None`` value in *override* **deletes** the corresponding key.
-    * A bare ``"_inherit"`` string keeps the base value unchanged
-      (equivalent to omitting the key, but explicit).
-    * Lists in *override* replace the base list wholesale **unless** the
-      list contains the sentinel string ``"_inherit"``, in which case the
-      sentinel is replaced by the base list elements (splice).
-    * A dict in *override* that contains ``_inherit: true`` keeps all
-      parent keys and overlays the rest (the ``_inherit`` key itself is
-      stripped from the result).
-    """
-    merged: dict = {}
-
-    all_keys = set(base) | set(override)
-    for key in all_keys:
-        if key in override:
-            ov = override[key]
-            # None → delete
-            if ov is None:
-                continue
-            # Bare _inherit string → keep base value (explicit no-op)
-            if ov == _INHERIT:
-                if key in base:
-                    merged[key] = base[key]
-                continue
-            bv = base.get(key)
-            if isinstance(ov, dict) and isinstance(bv, dict):
-                merged[key] = _merge_dicts(bv, ov)
-            elif isinstance(ov, list) and isinstance(bv, list):
-                merged[key] = _merge_lists(bv, ov)
-            else:
-                merged[key] = ov
-        else:
-            # key only in base
-            merged[key] = base[key]
-    return merged
-
-
-def _merge_dicts(base: dict, override: dict) -> dict:
-    """Merge two dicts, respecting ``_inherit: true``."""
-    if override.get(_INHERIT) is True:
-        # Keep parent, overlay rest (strip sentinel)
-        cleaned = {k: v for k, v in override.items() if k != _INHERIT}
-        return deep_merge(base, cleaned)
-    return deep_merge(base, override)
-
-
-def _merge_lists(base: list, override: list) -> list:
-    """Merge two lists, splicing base at ``_inherit`` sentinels."""
-    if _INHERIT not in override:
-        return list(override)
-    result: list = []
-    for item in override:
-        if item == _INHERIT:
-            result.extend(base)
-        else:
-            result.append(item)
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Scope / Stack
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -168,3 +98,73 @@ def load_json_scope(level: str, path: Path) -> ConfigScope:
     else:
         data = {}
     return ConfigScope(level=level, source=path, data=data)
+
+
+# ---------------------------------------------------------------------------
+# Merge engine
+# ---------------------------------------------------------------------------
+
+
+def deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge *override* into *base*, returning a **new** dict.
+
+    Rules
+    -----
+    * Dicts are merged recursively by default.
+    * A ``None`` value in *override* **deletes** the corresponding key.
+    * A bare ``"_inherit"`` string keeps the base value unchanged
+      (equivalent to omitting the key, but explicit).
+    * Lists in *override* replace the base list wholesale **unless** the
+      list contains the sentinel string ``"_inherit"``, in which case the
+      sentinel is replaced by the base list elements (splice).
+    * A dict in *override* that contains ``_inherit: true`` keeps all
+      parent keys and overlays the rest (the ``_inherit`` key itself is
+      stripped from the result).
+    """
+    merged: dict = {}
+
+    all_keys = set(base) | set(override)
+    for key in all_keys:
+        if key in override:
+            ov = override[key]
+            # None → delete
+            if ov is None:
+                continue
+            # Bare _inherit string → keep base value (explicit no-op)
+            if ov == _INHERIT:
+                if key in base:
+                    merged[key] = base[key]
+                continue
+            bv = base.get(key)
+            if isinstance(ov, dict) and isinstance(bv, dict):
+                merged[key] = _merge_dicts(bv, ov)
+            elif isinstance(ov, list) and isinstance(bv, list):
+                merged[key] = _merge_lists(bv, ov)
+            else:
+                merged[key] = ov
+        else:
+            # key only in base
+            merged[key] = base[key]
+    return merged
+
+
+def _merge_dicts(base: dict, override: dict) -> dict:
+    """Merge two dicts, respecting ``_inherit: true``."""
+    if override.get(_INHERIT) is True:
+        # Keep parent, overlay rest (strip sentinel)
+        cleaned = {k: v for k, v in override.items() if k != _INHERIT}
+        return deep_merge(base, cleaned)
+    return deep_merge(base, override)
+
+
+def _merge_lists(base: list, override: list) -> list:
+    """Merge two lists, splicing base at ``_inherit`` sentinels."""
+    if _INHERIT not in override:
+        return list(override)
+    result: list = []
+    for item in override:
+        if item == _INHERIT:
+            result.extend(base)
+        else:
+            result.append(item)
+    return result

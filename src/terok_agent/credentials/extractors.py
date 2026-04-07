@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Per-provider credential extractors for the auth interceptor.
+"""Extracts vendor-specific credentials from auth container mounts.
 
 Each extractor reads a vendor-specific credential file from a temporary
 auth container mount and returns a normalized dict suitable for storage
 in :class:`~terok_sandbox.CredentialDB`.  The dict must contain at least
-one of ``access_token``, ``token``, or ``key`` — the credential proxy
+one of ``access_token``, ``token``, or ``key`` --- the credential proxy
 server uses these fields to inject the real auth header.
 
-All extractors are pure functions: ``Path → dict``.  They raise
+All extractors are pure functions: ``Path -> dict``.  They raise
 ``ValueError`` if the file is missing, malformed, or empty.
 """
 
@@ -18,31 +18,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
-def _try_read_json(path: Path) -> dict | None:
-    """Try to read and parse a JSON file, returning ``None`` on any failure.
-
-    Avoids ``is_file()`` which can return ``False`` under SELinux `:Z`
-    relabeling (rootless podman container files may have a different MCS
-    label after the container exits).
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-        data = json.loads(text)
-        return data if isinstance(data, dict) else None
-    except (OSError, json.JSONDecodeError, ValueError):
-        return None
-
-
-def _expect_mapping(value: object, *, context: str) -> dict:
-    """Validate that *value* is a dict, raising ``ValueError`` if not."""
-    if not isinstance(value, dict):
-        raise ValueError(f"Expected mapping in {context}, got {type(value).__name__}")
-    return value
+# ---------------------------------------------------------------------------
+# Individual extractors (scannable catalog entries)
+# ---------------------------------------------------------------------------
 
 
 def extract_claude_oauth(base_dir: Path) -> dict:
-    """Extract Claude credentials — OAuth tokens or API key.
+    """Extract Claude credentials --- OAuth tokens or API key.
 
     Claude stores OAuth data in ``.credentials.json`` under
     ``claudeAiOauth.token.{accessToken, refreshToken}``.  If the user
@@ -210,10 +192,10 @@ def extract_glab_token(base_dir: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Extractor registry — maps provider names to their extraction function
+# Registry
 # ---------------------------------------------------------------------------
 
-#: Maps provider name → (extractor_fn, *extra_args).
+#: Maps provider name -> (extractor_fn, *extra_args).
 #: The extractor receives (base_dir, *extra_args) and returns a credential dict.
 EXTRACTORS: dict[str, tuple] = {
     "claude": (extract_claude_oauth,),
@@ -226,6 +208,11 @@ EXTRACTORS: dict[str, tuple] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Public dispatcher
+# ---------------------------------------------------------------------------
+
+
 def extract_credential(provider: str, base_dir: Path) -> dict:
     """Run the appropriate extractor for *provider* against *base_dir*.
 
@@ -236,3 +223,30 @@ def extract_credential(provider: str, base_dir: Path) -> dict:
         raise ValueError(f"No credential extractor for provider {provider!r}")
     fn, *args = entry
     return fn(base_dir, *args)
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
+def _try_read_json(path: Path) -> dict | None:
+    """Try to read and parse a JSON file, returning ``None`` on any failure.
+
+    Avoids ``is_file()`` which can return ``False`` under SELinux `:Z`
+    relabeling (rootless podman container files may have a different MCS
+    label after the container exits).
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def _expect_mapping(value: object, *, context: str) -> dict:
+    """Validate that *value* is a dict, raising ``ValueError`` if not."""
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected mapping in {context}, got {type(value).__name__}")
+    return value
