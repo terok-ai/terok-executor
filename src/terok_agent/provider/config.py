@@ -1,11 +1,10 @@
 # SPDX-FileCopyrightText: 2025 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Provider-aware config resolution utility.
+"""Extracts provider-specific values from a merged agent config dict.
 
-The ``resolve_provider_value`` function extracts values from a merged
-agent-config dict, supporting flat values and per-provider dicts with
-``_default`` fallback.  Pure function — no I/O, no terok dependencies.
+Supports flat values and per-provider dicts with ``_default`` fallback.
+Pure function — no I/O, no terok dependencies.
 
 The full config stack composition (``build_agent_config_stack``,
 ``resolve_agent_config``) remains in terok, which owns the global/project/

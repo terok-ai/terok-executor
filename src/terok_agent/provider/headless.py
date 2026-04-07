@@ -2,12 +2,11 @@
 # SPDX-FileCopyrightText: 2026 Andreas Knüpfer
 # SPDX-License-Identifier: Apache-2.0
 
-"""Headless (autopilot) provider registry for multi-agent support.
+"""Dispatches headless AI agent runs across multiple providers.
 
-Defines a frozen dataclass per provider and a registry dict, following the
-same pattern as ``AuthProvider`` in ``security/auth.py``.  Dispatch functions
-resolve the active provider, build the headless CLI command, and generate the
-per-provider shell wrapper.
+Resolves the active provider, builds the headless CLI command, and generates
+per-provider shell wrappers.  Each provider is a frozen dataclass; the
+``HEADLESS_PROVIDERS`` registry maps names to descriptors.
 
 Instruction delivery
 ~~~~~~~~~~~~~~~~~~~~
@@ -244,42 +243,6 @@ HEADLESS_PROVIDERS: dict[str, HeadlessProvider] = {}
 """All headless agent providers, keyed by name.  Loaded from ``resources/agents/*.yaml``."""
 
 PROVIDER_NAMES: tuple[str, ...] = ()
-
-_RESUME_FALLBACK_FN = """\
-# WORKAROUND: stale-session guard (timing-based heuristic).
-#
-# When a user starts an agent, exits immediately (no real interaction),
-# and re-runs, the captured session ID points to a conversation that was
-# never persisted.  The agent then fails with "No conversation found".
-#
-# This is a best-effort mitigation, not a proper fix: we assume that
-# any non-zero exit within 2 seconds of launch is a stale-session error
-# and retry without --resume.  This heuristic can misfire (e.g. a fast
-# config error would also trigger a retry), but the retry is harmless —
-# it just runs without resume, which is the correct fallback anyway.
-#
-# A proper fix would validate the session ID against the agent's storage
-# before injecting --resume, but that requires agent-specific probes
-# that don't exist yet.
-_terok_resume_or_fresh() {
-    local _session_file="$1" _resume_flag="$2"; shift 2
-    local _start; _start=$(date +%s)
-    "$@"; local _rc=$?
-    local _elapsed=$(( $(date +%s) - _start ))
-    if [ $_rc -ne 0 ] && [ $_elapsed -lt 2 ] && [ -s "$_session_file" ]; then
-        echo "terok: session not found (stale?), retrying without resume" >&2
-        rm -f "$_session_file"
-        local _retry=() _skip=false
-        for _a in "$@"; do
-            if $_skip; then _skip=false; continue; fi
-            if [ "$_a" = "$_resume_flag" ]; then _skip=true; continue; fi
-            _retry+=("$_a")
-        done
-        "${_retry[@]}"; _rc=$?
-    fi
-    return $_rc
-}
-"""
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -678,6 +641,43 @@ def _wrap_invocation(cmd: str, provider: HeadlessProvider, session_path: str | N
     if session_path and provider.resume_flag:
         return f"_terok_resume_or_fresh {session_path} {provider.resume_flag} {cmd}"
     return cmd
+
+
+_RESUME_FALLBACK_FN = """\
+# WORKAROUND: stale-session guard (timing-based heuristic).
+#
+# When a user starts an agent, exits immediately (no real interaction),
+# and re-runs, the captured session ID points to a conversation that was
+# never persisted.  The agent then fails with "No conversation found".
+#
+# This is a best-effort mitigation, not a proper fix: we assume that
+# any non-zero exit within 2 seconds of launch is a stale-session error
+# and retry without --resume.  This heuristic can misfire (e.g. a fast
+# config error would also trigger a retry), but the retry is harmless —
+# it just runs without resume, which is the correct fallback anyway.
+#
+# A proper fix would validate the session ID against the agent's storage
+# before injecting --resume, but that requires agent-specific probes
+# that don't exist yet.
+_terok_resume_or_fresh() {
+    local _session_file="$1" _resume_flag="$2"; shift 2
+    local _start; _start=$(date +%s)
+    "$@"; local _rc=$?
+    local _elapsed=$(( $(date +%s) - _start ))
+    if [ $_rc -ne 0 ] && [ $_elapsed -lt 2 ] && [ -s "$_session_file" ]; then
+        echo "terok: session not found (stale?), retrying without resume" >&2
+        rm -f "$_session_file"
+        local _retry=() _skip=false
+        for _a in "$@"; do
+            if $_skip; then _skip=false; continue; fi
+            if [ "$_a" = "$_resume_flag" ]; then _skip=true; continue; fi
+            _retry+=("$_a")
+        done
+        "${_retry[@]}"; _rc=$?
+    fi
+    return $_rc
+}
+"""
 
 
 def _generate_generic_wrapper(provider: HeadlessProvider) -> str:
