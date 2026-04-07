@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Credential proxy CLI commands for terok-agent.
+"""Manages the credential proxy daemon lifecycle via CLI subcommands.
 
 Wraps terok-sandbox proxy lifecycle with agent-level concerns: route
 generation from the YAML roster is performed before ``start`` and

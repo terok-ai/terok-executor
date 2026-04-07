@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Authentication, credential extraction, and credential proxy.
+"""Authenticates agents and proxies their credentials into sandboxed containers.
 
 Delegates to :mod:`.auth` for auth provider registry and container-based
 auth flows, :mod:`.extractors` for per-provider credential file parsing,
