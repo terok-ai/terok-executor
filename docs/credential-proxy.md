@@ -10,9 +10,14 @@ API keys, OAuth tokens, or SSH private keys from these shared mounts.
 
 No real secret enters a task container. Instead:
 
-1. **Credential DB** (sqlite3, host-side) stores API keys and OAuth tokens
-2. **Credential proxy** (aiohttp, TCP+Unix socket) injects real auth headers
+1. **Credential DB** (host-side) stores API keys and OAuth tokens
+2. **Credential proxy** ([terok-sandbox](https://terok-ai.github.io/terok-sandbox/))
+   resolves phantom tokens to real credentials and forwards requests upstream
 3. **Per-provider phantom tokens** (per-task, per-provider) are what containers see
+4. **SSH agent proxy** ([terok-sandbox](https://terok-ai.github.io/terok-sandbox/))
+   lets containers sign with host-side SSH keys without the private keys
+   entering the container. A socat bridge inside the container relays
+   SSH agent requests over TCP to the host-side proxy.
 
 ## Architecture
 
@@ -25,29 +30,20 @@ Credential DB (sqlite3)                   Per-provider phantom tokens (env vars)
     (token, project, task,                  GH_TOKEN=<gh-phantom>
      credential_set, provider)              GITLAB_TOKEN=<glab-phantom>
 
-Credential Proxy (aiohttp)                Agent / tool makes API request
-  TCP: 127.0.0.1:18731                      with phantom token in auth header
-  Unix: $XDG_RUNTIME_DIR/terok/sock
-  1. Extracts phantom token                 Routing is by token, not URL path.
-  2. Looks up provider from token           Token encodes which provider it's for.
-  3. Loads real credential from DB
-  4. Injects real auth header
-  5. Forwards to upstream (genuine TLS)
+Credential Proxy (terok-sandbox)          Agent / tool makes API request
+  TCP + Unix socket listeners                with phantom token in auth header
+  Resolves phantom → real credential
+  Injects auth header, forwards             Routing is by token, not URL path.
+  to upstream over TLS                       Token encodes which provider it's for.
 ```
 
 ### Why TCP, not Unix sockets?
 
-SELinux blocks `connect()` on Unix sockets mounted into rootless Podman
-containers. The `connectto` process label check denies `container_t ->
-unconfined_t` regardless of file relabeling. This is intentional per
-Red Hat's container security model.
-
-TCP via `host.containers.internal:<port>` is the same pattern the gate
-server uses. The phantom token provides authentication. Shield's
-`loopback_ports` allows the proxy port through the nftables firewall.
-
-See: [Podman #23972](https://github.com/containers/podman/discussions/23972),
-[Dan Walsh: SELinux and Containers](https://danwalsh.livejournal.com/78643.html).
+SELinux blocks `connect()` on host Unix sockets mounted into rootless
+Podman containers (`container_t -> unconfined_t` denied). Containers
+reach the proxy via TCP (`host.containers.internal:<port>`) instead.
+[terok-shield](https://terok-ai.github.io/terok-shield/) allows the
+proxy port through the nftables firewall via `loopback_ports`.
 
 ### Per-provider phantom token routing
 
@@ -71,13 +67,15 @@ their SDK supports:
 
 | Agent | How it reaches the proxy | Notes |
 |-------|-------------------------|-------|
-| **Claude** | `ANTHROPIC_BASE_URL=http://host.containers.internal:<proxy_port> (default: 18731)` | Anthropic SDK respects this env var |
-| **Codex** | `OPENAI_BASE_URL=http://host.containers.internal:18731` | OpenAI SDK respects this env var (deprecated in Codex v0.117, needs config.toml) |
+| **Claude** | `ANTHROPIC_BASE_URL=http://host.containers.internal:<port>` | Anthropic SDK respects this env var (default port: 18731) |
+| **Codex** | `OPENAI_BASE_URL=http://host.containers.internal:<port>` | OpenAI SDK respects this env var (default port: 18731) |
 | **Vibe** | `config.toml` with `api_base` in shared `~/.vibe` mount | Mistral SDK ignores URL path in api_base, only uses host:port. Written by `shared_config_patch` in YAML |
 | **KISSKI** | `TEROK_OC_KISSKI_BASE_URL` env var override | OpenCode reads this; overridden from the real upstream to proxy |
 | **Blablador** | `TEROK_OC_BLABLADOR_BASE_URL` env var override | Same pattern as KISSKI |
 | **gh** | `http_unix_socket` in `~/.config/gh/config.yml` + socat bridge | gh routes ALL API traffic through a Unix socket. socat bridges it to TCP. See below. |
 | **glab** | `GITLAB_API_HOST` + `API_PROTOCOL=http` env vars | glab sends to `http://<api_host>/api/v4/...` |
+| **CodeRabbit** | Real API key via sidecar `env_map` | CLI has no base URL override, so proxy routing is not possible. Sidecar receives the real key directly from the credential DB. |
+| **SonarCloud** | `SONAR_HOST_URL` + `SONAR_TOKEN` phantom env | Tool agent; scanner uses host URL override |
 
 ### gh: socat bridge pattern
 
@@ -151,10 +149,6 @@ credential_proxy:
   and `GH_TOKEN` are both set. The socket path is hardcoded to
   `/tmp/terok-gh-proxy.sock` (matching the `shared_config_patch`).
 
-- **anthropic-beta header**: The proxy appends `oauth-2025-04-20` to the
-  `anthropic-beta` header for OAuth credentials. Claude Code sends its own
-  beta features in this header, so the proxy must append (not replace).
-
 ## Auth Flow
 
 ### Three auth paths
@@ -177,31 +171,32 @@ After storing credentials, `write_proxy_config()` applies any
 
 ## Per-Provider Credential Extractors
 
-| Provider  | File               | Key fields                    |
-|-----------|--------------------|-------------------------------|
-| Claude    | `.credentials.json`| access_token, refresh_token   |
-| Codex     | `auth.json`        | access_token, refresh_token   |
-| Vibe      | `.env`             | key (MISTRAL_API_KEY)         |
-| Blablador | `config.json`      | key (api_key)                 |
-| KISSKI    | `config.json`      | key (api_key)                 |
-| gh        | `hosts.yml`        | token (oauth_token)           |
-| glab      | `config.yml`       | token (per-host)              |
+| Provider   | File                | Key fields                    |
+|------------|---------------------|-------------------------------|
+| Claude     | `.credentials.json` | access_token, refresh_token   |
+| Codex      | `auth.json`         | access_token, refresh_token   |
+| Vibe       | `.env`              | key (MISTRAL_API_KEY)         |
+| Blablador  | `config.json`       | key (api_key)                 |
+| KISSKI     | `config.json`       | key (api_key)                 |
+| gh         | `hosts.yml`         | token (oauth_token)           |
+| glab       | `config.yml`        | token (per-host)              |
+| CodeRabbit | —                   | API key via `--api-key`       |
+| SonarCloud | —                   | API key via `--api-key`       |
 
 ## Known Limitations
 
-- **Codex**: Needs WebSocket support (proxy only handles HTTP), OAuth token
-  refresh (Codex refreshes via `auth.openai.com`), and config.toml base URL
-  (env var deprecated in v0.117). Filed as bug issues.
-
-- **OAuth token refresh**: Claude and Codex OAuth tokens expire (~1h). The
-  proxy does not refresh them automatically. Re-auth required after expiry.
+- **Codex**: The credential proxy only handles HTTP. Codex needs WebSocket
+  support for its realtime protocol, which the proxy does not yet provide.
 
 - **Copilot**: Not proxied yet. No `credential_proxy` section in YAML.
 
-- **SSH keys**: Still bind-mounted as files. SSH agent proxy planned (#551).
-
 ## Package Boundaries
 
-- **terok-sandbox**: Credential DB, proxy server, TCP+Unix listener, lifecycle
-- **terok-agent**: YAML registry, extractors, auth interceptor, runner proxy env
-- **terok**: Environment builder, phantom token injection for full-stack tasks
+- **[terok-sandbox](https://terok-ai.github.io/terok-sandbox/)**: Credential
+  DB, proxy server (HTTP forwarding, phantom token resolution, OAuth token
+  refresh, SSH agent proxy), TCP+Unix listeners, lifecycle management
+- **terok-agent** (this package): YAML agent registry, credential extractors,
+  auth CLI, container environment wiring (phantom env vars, base URL overrides,
+  socat bridges, `shared_config_patch`)
+- **[terok](https://terok-ai.github.io/terok/)**: Environment builder, phantom
+  token injection for full-stack multi-agent tasks
