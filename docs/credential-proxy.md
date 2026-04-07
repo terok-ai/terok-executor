@@ -72,13 +72,13 @@ their SDK supports:
 | Agent | How it reaches the proxy | Notes |
 |-------|-------------------------|-------|
 | **Claude** | `ANTHROPIC_BASE_URL=http://host.containers.internal:<port>` | Anthropic SDK respects this env var (default port: 18731) |
-| **Codex** | `OPENAI_BASE_URL=http://host.containers.internal:18731` | OpenAI SDK respects this env var |
+| **Codex** | `OPENAI_BASE_URL=http://host.containers.internal:<port>` | OpenAI SDK respects this env var (default port: 18731) |
 | **Vibe** | `config.toml` with `api_base` in shared `~/.vibe` mount | Mistral SDK ignores URL path in api_base, only uses host:port. Written by `shared_config_patch` in YAML |
 | **KISSKI** | `TEROK_OC_KISSKI_BASE_URL` env var override | OpenCode reads this; overridden from the real upstream to proxy |
 | **Blablador** | `TEROK_OC_BLABLADOR_BASE_URL` env var override | Same pattern as KISSKI |
 | **gh** | `http_unix_socket` in `~/.config/gh/config.yml` + socat bridge | gh routes ALL API traffic through a Unix socket. socat bridges it to TCP. See below. |
 | **glab** | `GITLAB_API_HOST` + `API_PROTOCOL=http` env vars | glab sends to `http://<api_host>/api/v4/...` |
-| **CodeRabbit** | `CODERABBIT_API_KEY` phantom env | Sidecar tool; runs in a separate L1 container with real API key from env_map |
+| **CodeRabbit** | Real API key via sidecar `env_map` | CLI has no base URL override, so proxy routing is not possible. Sidecar receives the real key directly from the credential DB. |
 | **SonarCloud** | `SONAR_HOST_URL` + `SONAR_TOKEN` phantom env | Tool agent; scanner uses host URL override |
 
 ### gh: socat bridge pattern
