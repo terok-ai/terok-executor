@@ -4,9 +4,9 @@
 """Loads agent and tool definitions from YAML and assembles them into a queryable roster.
 
 Loads per-agent definition files from bundled package resources and optional
-user extensions, deserializes them into the existing dataclass types, and
-provides the same query API that ``headless_providers`` and ``auth`` expose
-today.
+user extensions, deserializes them into ``HeadlessProvider`` and
+``AuthProvider`` dataclasses, and builds the registries that the rest of
+the package queries.
 
 Directory layout::
 
@@ -134,7 +134,7 @@ class SidecarSpec:
 class AgentRoster:
     """Loaded roster of agents and tools from YAML definitions.
 
-    Provides the same query API as the legacy hardcoded dicts.
+    Queryable by provider name, with typed accessors for each registry.
     """
 
     _providers: dict[str, HeadlessProvider] = field(default_factory=dict)

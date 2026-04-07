@@ -283,8 +283,8 @@ def _inject_proxy_tokens(roster: AgentRoster, scope: str, task_id: str) -> dict[
     """Inject credential proxy phantom tokens if the proxy is running.
 
     Always soft-fails: returns an empty dict when the proxy is not available.
-    Callers that require the proxy (e.g. terok project mode) should call
-    ``ensure_proxy_reachable()`` **before** invoking the assembly function.
+    Callers that require the proxy (e.g. terok project mode) should verify
+    proxy availability before invoking the assembly function.
     """
     from terok_sandbox import (
         CredentialDB,

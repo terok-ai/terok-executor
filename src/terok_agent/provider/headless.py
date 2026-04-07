@@ -16,12 +16,13 @@ Custom instructions are delivered via a provider-specific channel:
 - **Codex**: ``model_instructions_file`` config (``-c`` flag in the wrapper).
 - **OpenCode / Blablador / KISSKI**: ``"instructions"`` array in ``opencode.json``
   pointing to ``/home/dev/.terok/instructions.md`` (injected on the host by
-  :func:`~terok.lib.instrumentation.agents._inject_opencode_instructions`).
+  :func:`~terok_agent.provider.agents._inject_opencode_instructions`).
 - **Other providers** (Copilot, Vibe, …): best-effort prompt prepending
   via ``prompt_extra`` in :class:`ProviderConfig`.
 
-The instructions file is always written (with a neutral default when no
-custom text is configured) so that config-file references never dangle.
+The instructions file is always written by :func:`~terok_agent.provider.agents.prepare_agent_config_dir`
+(with a neutral default when no custom text is configured) so that
+config-file references never dangle.
 """
 
 from __future__ import annotations
@@ -420,7 +421,7 @@ def generate_agent_wrapper(
     For other providers, produces a simpler wrapper that sets git env vars
     and delegates to the binary.  Instructions are delivered via
     ``opencode.json`` (OpenCode/Blablador), ``model_instructions_file``
-    (Codex), or ``--append-system-prompt`` (Claude) — not via the wrapper.
+    (Codex, injected by the wrapper), or ``--append-system-prompt`` (Claude).
 
     Args:
         claude_wrapper_fn: ``(cfg: WrapperConfig) -> str``.

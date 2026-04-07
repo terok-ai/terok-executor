@@ -293,7 +293,7 @@ def _capture_credentials(
 ) -> None:
     """Extract credentials from *auth_dir* and store in the credential DB.
 
-    Uses the per-provider extractors from :mod:`credential_extractors`.
+    Uses the per-provider extractors from :mod:`.extractors`.
     If extraction fails (no credential file, malformed), prints a warning
     but does not raise — the auth flow succeeded, the user can retry.
     """

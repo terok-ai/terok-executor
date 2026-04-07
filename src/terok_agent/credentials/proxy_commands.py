@@ -84,7 +84,7 @@ def scan_leaked_credentials(mounts_base: Path) -> list[tuple[str, Path]]:
     into containers.  This function checks each routed provider's mount for
     credential files that would leak real tokens alongside phantom ones.
 
-    Files injected by :func:`~terok_agent.auth._write_claude_credentials_file`
+    Files injected by :func:`~terok_agent.credentials.auth._write_claude_credentials_file`
     are recognised by their dummy ``accessToken`` marker and skipped.
     """
     from terok_agent.roster.loader import get_roster

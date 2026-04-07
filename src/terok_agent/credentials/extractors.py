@@ -9,7 +9,7 @@ in :class:`~terok_sandbox.CredentialDB`.  The dict must contain at least
 one of ``access_token``, ``token``, or ``key`` --- the credential proxy
 server uses these fields to inject the real auth header.
 
-All extractors are pure functions: ``Path -> dict``.  They raise
+All extractors are pure functions (some take extra config arguments via the registry).  They raise
 ``ValueError`` if the file is missing, malformed, or empty.
 """
 
@@ -27,7 +27,7 @@ def extract_claude_oauth(base_dir: Path) -> dict:
     """Extract Claude credentials --- OAuth tokens or API key.
 
     Claude stores OAuth data in ``.credentials.json`` under
-    ``claudeAiOauth.token.{accessToken, refreshToken}``.  If the user
+    ``claudeAiOauth.{accessToken, refreshToken}``.  If the user
     authenticated with an API key instead, ``config.json`` contains
     ``{"api_key": "..."}``.  Both paths are checked.
     """

@@ -3,8 +3,9 @@
 
 """Loads agent and tool definitions from layered YAML config into a queryable roster.
 
-Delegates to :mod:`.loader` for YAML deserialization and roster construction,
-and to :mod:`.config_stack` for generic layered config resolution.
+Delegates to :mod:`.loader` for YAML deserialization and roster construction.
+:mod:`.config_stack` provides generic layered config resolution used by the
+loader internally and by external consumers (terok config stack composition).
 """
 
 from .loader import (

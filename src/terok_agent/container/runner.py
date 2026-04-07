@@ -4,11 +4,12 @@
 """Launches AI agents in hardened Podman containers.
 
 Builds the environment, prepares agent config, and launches a hardened
-Podman container with the requested AI agent.  Three launch modes:
+Podman container with the requested AI agent.  Four launch modes:
 
 - **Headless**: fire-and-forget with a prompt (``run_headless``)
 - **Interactive**: user logs in, agent is ready (``run_interactive``)
 - **Web**: toad served over HTTP (``run_web``)
+- **Tool**: sidecar tool container (``run_tool``)
 
 All user config is runtime (env vars + volumes) — no L2 image build needed.
 Gate is on by default (safe-by-default egress control).
@@ -37,7 +38,7 @@ _logger = logging.getLogger(__name__)
 class AgentRunner:
     """Composes sandbox + agent config into a single container launch.
 
-    All three run methods follow the same flow:
+    All four run methods follow the same flow:
 
     1. Ensure L0+L1 images exist (build if missing)
     2. Prepare agent-config directory (wrapper, instructions, prompt)
@@ -504,7 +505,7 @@ class AgentRunner:
     def _direct_credential_env(self, tool_name: str) -> dict[str, str]:
         """Load the real API key for a sidecar tool and return as env dict.
 
-        Unlike :meth:`_credential_proxy_env` (which creates phantom tokens),
+        Unlike the phantom-token injection in :mod:`~terok_agent.container.env`,
         this injects the actual credential.  Safe because sidecar containers
         have no agent code that could leak it.
         """
