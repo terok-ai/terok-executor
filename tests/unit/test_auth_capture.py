@@ -199,6 +199,97 @@ class TestApplyPostCaptureState:
         )
         assert state_path.read_text() == original
 
+    def test_recovers_from_corrupt_json(self, tmp_path: Path) -> None:
+        """Corrupt JSON in existing file is discarded; patch is applied fresh."""
+        target_dir = tmp_path / "_test-config"
+        target_dir.mkdir(parents=True)
+        (target_dir / ".state.json").write_text("{corrupt!!!")
+
+        _apply_post_capture_state(
+            "_test-config",
+            {".state.json": {"setupDone": True}},
+            tmp_path,
+        )
+        state = json.loads((target_dir / ".state.json").read_text())
+        assert state == {"setupDone": True}
+
+    def test_replaces_non_dict_json(self, tmp_path: Path) -> None:
+        """Non-dict JSON (e.g. a list) in existing file is discarded."""
+        target_dir = tmp_path / "_test-config"
+        target_dir.mkdir(parents=True)
+        (target_dir / ".state.json").write_text("[1, 2, 3]")
+
+        _apply_post_capture_state(
+            "_test-config",
+            {".state.json": {"setupDone": True}},
+            tmp_path,
+        )
+        state = json.loads((target_dir / ".state.json").read_text())
+        assert state == {"setupDone": True}
+
+
+class TestCaptureAppliesPostCaptureState:
+    """Verify _capture_credentials invokes post-capture state when provider is given."""
+
+    def test_capture_triggers_post_capture_state(self, tmp_path: Path) -> None:
+        """When auth_provider has post_capture_state, it is applied after capture."""
+        from terok_agent.credentials.auth import AuthProvider
+
+        provider = AuthProvider(
+            name="claude",
+            label="Claude",
+            host_dir_name="_claude-config",
+            container_mount="/home/dev/.claude",
+            command=["claude"],
+            banner_hint="",
+            modes=("api_key",),
+            post_capture_state={".claude.json": {"hasCompletedOnboarding": True}},
+        )
+
+        # Set up a valid credential file so capture succeeds
+        cred = {"claudeAiOauth": {"accessToken": "sk-test"}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+
+        mounts = tmp_path / "mounts"
+        db_path = tmp_path / "proxy" / "credentials.db"
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials(
+                "claude", tmp_path, "default", mounts_base=mounts, auth_provider=provider
+            )
+
+        state_path = mounts / "_claude-config" / ".claude.json"
+        assert state_path.is_file()
+        assert json.loads(state_path.read_text()) == {"hasCompletedOnboarding": True}
+
+    def test_capture_skips_post_capture_when_empty(self, tmp_path: Path) -> None:
+        """No post_capture_state means no extra files are written."""
+        from terok_agent.credentials.auth import AuthProvider
+
+        provider = AuthProvider(
+            name="claude",
+            label="Claude",
+            host_dir_name="_claude-config",
+            container_mount="/home/dev/.claude",
+            command=["claude"],
+            banner_hint="",
+            modes=("api_key",),
+        )
+
+        cred = {"claudeAiOauth": {"accessToken": "sk-test"}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+
+        mounts = tmp_path / "mounts"
+        db_path = tmp_path / "proxy" / "credentials.db"
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials(
+                "claude", tmp_path, "default", mounts_base=mounts, auth_provider=provider
+            )
+
+        # No .claude.json should exist — post_capture_state is empty
+        assert not (mounts / "_claude-config" / ".claude.json").exists()
+
 
 class TestCaptureWritesCredentialsFile:
     """Verify _capture_credentials writes .credentials.json for Claude OAuth."""

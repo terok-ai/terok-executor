@@ -392,8 +392,8 @@ def _write_claude_credentials_file(cred_data: dict, mounts_base: Path) -> None:
     marker — actual API auth uses the per-task phantom token from the
     ``CLAUDE_CODE_OAUTH_TOKEN`` env var.
 
-    Also ensures ``.claude.json`` has ``hasCompletedOnboarding: true``
-    so Claude Code skips the first-run setup wizard.
+    Onboarding state (``.claude.json`` / ``hasCompletedOnboarding``) is
+    applied separately via ``_apply_post_capture_state`` after capture.
     """
     import json
 
