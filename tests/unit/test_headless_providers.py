@@ -143,7 +143,7 @@ class TestGenerateAgentWrapper:
     def test_non_vibe_wrappers_lack_model_sync(self) -> None:
         """Only vibe gets the model sync block."""
         for name in AGENT_PROVIDERS:
-            if name in ("claude", "vibe"):
+            if name == "vibe":
                 continue
             wrapper = _provider_wrapper(name)
             assert "vibe-model-sync" not in wrapper, f"{name} should not have model sync"
