@@ -25,6 +25,7 @@ except PackageNotFoundError:
     pass  # editable install or running from source without metadata
 
 # -- terok-sandbox protocol types (re-exported for convenience) ----------------
+from terok_sandbox import ConfigScope, ConfigStack
 from terok_sandbox.doctor import CheckVerdict, DoctorCheck
 
 # -- Commands + CLI surface ----------------------------------------------------
@@ -84,7 +85,6 @@ from .provider.providers import (
 
 # -- Roster (agent catalog + config resolution) --------------------------------
 from .roster import CredentialProxyRoute, SidecarSpec, ensure_proxy_routes, get_roster
-from .roster.config_stack import ConfigScope, ConfigStack
 
 # -- Bootstrap YAML roster into module-level dicts ---------------------------
 # AGENT_PROVIDERS and AUTH_PROVIDERS are empty dicts populated here to avoid
