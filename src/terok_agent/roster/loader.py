@@ -25,7 +25,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .config_stack import deep_merge
+from terok_sandbox.config_stack import deep_merge
 
 if TYPE_CHECKING:
     from terok_sandbox import SandboxConfig

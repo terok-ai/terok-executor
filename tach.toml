@@ -39,20 +39,12 @@ depends_on = []
 
 # ── roster/ — agent catalog ─────────────────────────────────────────
 
-# Generic layered config resolution
-[[modules]]
-path = "terok_agent.roster.config_stack"
-depends_on = [
-    "terok_agent._util",
-]
-
 # YAML agent roster — loads bundled + user agent definitions
 [[modules]]
 path = "terok_agent.roster.loader"
 depends_on = [
     "terok_agent._util",
     "terok_agent.credentials.auth",
-    "terok_agent.roster.config_stack",
     "terok_agent.provider.providers",
 ]
 
@@ -218,5 +210,4 @@ depends_on = [
     "terok_agent.provider.instructions",
     "terok_agent.provider.providers",
     "terok_agent.roster",
-    "terok_agent.roster.config_stack",
 ]
