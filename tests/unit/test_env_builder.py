@@ -36,7 +36,11 @@ def _make_proxy_db(tmp_path: Path, cred_name: str = "claude", cred_data: dict | 
     cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
     cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
     db = CredentialDB(cfg.proxy_db_path)
-    db.store_credential("default", cred_name, cred_data or {"type": "api_key", "key": "sk-test"})
+    db.store_credential(
+        "default",
+        cred_name,
+        {"type": "api_key", "key": "sk-test"} if cred_data is None else cred_data,
+    )
     db.close()
     return cfg
 
@@ -370,7 +374,7 @@ class TestCredentialProxy:
 
     def test_caller_manages_proxy_skips_injection(self, base_spec, roster):
         result = assemble_container_env(base_spec, roster, caller_manages_proxy=True)
-        assert "TEROK_PROXY_PORT" not in result.env
+        assert "ANTHROPIC_API_KEY" not in result.env
 
     def test_proxy_not_running_returns_no_tokens(self, base_spec, roster):
         with (
@@ -378,7 +382,7 @@ class TestCredentialProxy:
             patch("terok_sandbox.is_proxy_running", return_value=False),
         ):
             result = assemble_container_env(base_spec, roster, caller_manages_proxy=False)
-        assert "TEROK_PROXY_PORT" not in result.env
+        assert "ANTHROPIC_API_KEY" not in result.env
 
     def test_proxy_running_injects_tokens(self, workspace, envs_dir, roster, tmp_path):
         cfg = _make_proxy_db(tmp_path)
@@ -403,7 +407,6 @@ class TestCredentialProxy:
             patch("terok_sandbox.SandboxConfig", return_value=cfg),
         ):
             result = assemble_container_env(spec, roster, caller_manages_proxy=False)
-        assert "TEROK_PROXY_PORT" not in result.env
         assert "ANTHROPIC_API_KEY" not in result.env
 
     def test_proxy_db_error_returns_empty(self, base_spec, roster):
@@ -413,7 +416,7 @@ class TestCredentialProxy:
             patch("terok_sandbox.CredentialDB", side_effect=OSError("corrupt")),
         ):
             result = assemble_container_env(base_spec, roster, caller_manages_proxy=False)
-        assert "TEROK_PROXY_PORT" not in result.env
+        assert "ANTHROPIC_API_KEY" not in result.env
 
     def test_proxy_oauth_credential_uses_oauth_phantom_env(
         self, workspace, envs_dir, roster, tmp_path
@@ -460,7 +463,7 @@ class TestCredentialProxy:
             ),
         ):
             result = assemble_container_env(spec, roster, caller_manages_proxy=False)
-        assert "TEROK_PROXY_PORT" not in result.env
+        assert "ANTHROPIC_API_KEY" not in result.env
 
     def test_proxy_socket_transport_injects_socket_env(self, workspace, envs_dir, roster, tmp_path):
         """Socket transport injects socket_env and socket_path for routes that declare them."""
@@ -506,7 +509,7 @@ class TestCredentialProxy:
             patch("terok_sandbox.is_proxy_running", return_value=False),
         ):
             result = assemble_container_env(spec, roster, caller_manages_proxy=False)
-        assert "TEROK_PROXY_PORT" not in result.env
+        assert "ANTHROPIC_API_KEY" not in result.env
 
     def test_proxy_injects_ssh_agent_token(self, workspace, envs_dir, roster, tmp_path):
         """SSH agent token injected when scope has valid keys in ssh-keys.json."""
@@ -587,7 +590,7 @@ class TestCredentialProxy:
         with (
             patch("terok_sandbox.is_proxy_socket_active", return_value=True),
             patch("terok_sandbox.CredentialDB", side_effect=OSError("corrupt")),
-            pytest.raises(SystemExit, match="DB unavailable.*corrupt"),
+            pytest.raises(SystemExit, match="DB unavailable.*Check logs"),
         ):
             assemble_container_env(spec, roster, caller_manages_proxy=False)
 
@@ -601,7 +604,7 @@ class TestCredentialProxy:
             patch(
                 "terok_sandbox.CredentialDB.create_proxy_token", side_effect=RuntimeError("boom")
             ),
-            pytest.raises(SystemExit, match="injection failed.*boom"),
+            pytest.raises(SystemExit, match="injection failed.*Check logs"),
         ):
             assemble_container_env(spec, roster, caller_manages_proxy=False)
 

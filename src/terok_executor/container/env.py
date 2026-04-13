@@ -377,15 +377,15 @@ def _inject_proxy_tokens(
     proxy_routes = roster.proxy_routes
     try:
         db = CredentialDB(cfg.proxy_db_path)
-    except Exception as exc:
-        _logger.warning("Credential proxy DB unavailable: %s: %s", type(exc).__name__, exc)
+    except Exception:
+        _logger.exception("Credential proxy DB unavailable")
         if proxy_required:
             raise SystemExit(
-                f"Credential proxy DB unavailable: {type(exc).__name__}: {exc}\n\n"
+                "Credential proxy DB unavailable. Check logs for details.\n\n"
                 "Start it with:\n"
                 "  terok credential-proxy install   (systemd socket activation)\n"
                 "  terok credential-proxy start     (manual daemon)"
-            ) from exc
+            ) from None
         return {}
 
     try:
@@ -408,15 +408,15 @@ def _inject_proxy_tokens(
             tokens[name] = db.create_proxy_token(scope, task_id, credential_set, name)
 
         port = get_proxy_port(cfg)
-    except Exception as exc:
-        _logger.warning("Credential proxy token injection failed: %s: %s", type(exc).__name__, exc)
+    except Exception:
+        _logger.exception("Credential proxy token injection failed")
         if proxy_required:
             raise SystemExit(
-                f"Credential proxy token injection failed: {type(exc).__name__}: {exc}\n\n"
+                "Credential proxy token injection failed. Check logs for details.\n\n"
                 "Start it with:\n"
                 "  terok credential-proxy install   (systemd socket activation)\n"
                 "  terok credential-proxy start     (manual daemon)"
-            ) from exc
+            ) from None
         return {}
     finally:
         db.close()
