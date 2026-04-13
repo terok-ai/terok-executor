@@ -414,6 +414,52 @@ class TestCredentialProxy:
             result = assemble_container_env(base_spec, roster, caller_manages_proxy=False)
         assert "TEROK_PROXY_PORT" not in result.env
 
+    def test_proxy_oauth_credential_uses_oauth_phantom_env(
+        self, workspace, envs_dir, roster, tmp_path
+    ):
+        """OAuth credential selects oauth_phantom_env (e.g. CLAUDE_CODE_OAUTH_TOKEN)."""
+        from terok_sandbox import CredentialDB, SandboxConfig
+
+        cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
+        cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = CredentialDB(cfg.proxy_db_path)
+        db.store_credential("default", "claude", {"type": "oauth", "access_token": "oa-tok"})
+        db.close()
+
+        spec = _spec(workspace, envs_dir, credential_scope="test-project")
+        with (
+            patch("terok_sandbox.is_proxy_socket_active", return_value=True),
+            patch("terok_sandbox.SandboxConfig", return_value=cfg),
+        ):
+            result = assemble_container_env(spec, roster, caller_manages_proxy=False)
+
+        assert "CLAUDE_CODE_OAUTH_TOKEN" in result.env
+        assert result.env["CLAUDE_CODE_OAUTH_TOKEN"].startswith("terok-p-")
+        # API key env var must NOT be set when OAuth credential is stored
+        assert "ANTHROPIC_API_KEY" not in result.env
+
+    def test_proxy_api_key_falls_back_to_phantom_env(self, workspace, envs_dir, roster, tmp_path):
+        """API-key credential uses phantom_env even when oauth_phantom_env exists."""
+        from terok_sandbox import CredentialDB, SandboxConfig
+
+        cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
+        cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = CredentialDB(cfg.proxy_db_path)
+        db.store_credential("default", "claude", {"type": "api_key", "key": "sk-ant-test"})
+        db.close()
+
+        spec = _spec(workspace, envs_dir, credential_scope="test-project")
+        with (
+            patch("terok_sandbox.is_proxy_socket_active", return_value=True),
+            patch("terok_sandbox.SandboxConfig", return_value=cfg),
+        ):
+            result = assemble_container_env(spec, roster, caller_manages_proxy=False)
+
+        assert "ANTHROPIC_API_KEY" in result.env
+        assert result.env["ANTHROPIC_API_KEY"].startswith("terok-p-")
+        # OAuth env var must NOT be set for API key credentials
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in result.env
+
     def test_proxy_token_creation_error_returns_empty(self, workspace, envs_dir, roster, tmp_path):
         """Token creation failure returns empty env gracefully."""
         from terok_sandbox import CredentialDB, SandboxConfig

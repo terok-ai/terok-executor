@@ -332,6 +332,15 @@ def _inject_proxy_tokens(roster: AgentRoster, scope: str, task_id: str) -> dict[
         routed = stored & proxy_routes.keys()
         if not routed:
             return {}
+
+        # Load credential types so we can select the right phantom env vars.
+        # OAuth credentials get oauth_phantom_env (e.g. CLAUDE_CODE_OAUTH_TOKEN),
+        # while API keys get phantom_env (e.g. ANTHROPIC_API_KEY).
+        credential_types: dict[str, str] = {}
+        for name in routed:
+            cred = db.load_credential(credential_set, name)
+            credential_types[name] = (cred.get("type") if cred else None) or "api_key"
+
         tokens = {
             name: db.create_proxy_token(scope, task_id, credential_set, name) for name in routed
         }
@@ -348,7 +357,11 @@ def _inject_proxy_tokens(roster: AgentRoster, scope: str, task_id: str) -> dict[
     for name, route in proxy_routes.items():
         if name not in routed:
             continue
-        for env_var in route.phantom_env:
+        is_oauth = credential_types.get(name) == "oauth"
+        token_vars = (
+            route.oauth_phantom_env if (is_oauth and route.oauth_phantom_env) else route.phantom_env
+        )
+        for env_var in token_vars:
             env[env_var] = tokens[name]
         if route.base_url_env:
             env[route.base_url_env] = proxy_base
