@@ -482,6 +482,135 @@ class TestCredentialProxy:
             result = assemble_container_env(spec, roster, caller_manages_proxy=False)
         assert "TEROK_PROXY_PORT" not in result.env
 
+    def test_proxy_socket_transport_injects_socket_env(self, workspace, envs_dir, roster, tmp_path):
+        """Socket transport injects socket_env and socket_path for routes that declare them."""
+        from terok_sandbox import CredentialDB, SandboxConfig
+
+        cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
+        cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = CredentialDB(cfg.proxy_db_path)
+        db.store_credential("default", "claude", {"type": "api_key", "key": "sk-test"})
+        db.close()
+
+        spec = _spec(workspace, envs_dir, credential_scope="proj", proxy_transport="socket")
+        with (
+            patch("terok_sandbox.is_proxy_socket_active", return_value=True),
+            patch("terok_sandbox.SandboxConfig", return_value=cfg),
+        ):
+            result = assemble_container_env(spec, roster, caller_manages_proxy=False)
+
+        # Claude route declares socket_env=ANTHROPIC_UNIX_SOCKET
+        assert "ANTHROPIC_UNIX_SOCKET" in result.env
+        assert result.env["ANTHROPIC_UNIX_SOCKET"] == "/tmp/terok-claude-proxy.sock"
+
+    def test_proxy_direct_transport_omits_socket_env(self, workspace, envs_dir, roster, tmp_path):
+        """Direct transport (default) does not inject socket_env."""
+        from terok_sandbox import CredentialDB, SandboxConfig
+
+        cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
+        cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = CredentialDB(cfg.proxy_db_path)
+        db.store_credential("default", "claude", {"type": "api_key", "key": "sk-test"})
+        db.close()
+
+        spec = _spec(workspace, envs_dir, credential_scope="proj", proxy_transport="direct")
+        with (
+            patch("terok_sandbox.is_proxy_socket_active", return_value=True),
+            patch("terok_sandbox.SandboxConfig", return_value=cfg),
+        ):
+            result = assemble_container_env(spec, roster, caller_manages_proxy=False)
+
+        assert "ANTHROPIC_UNIX_SOCKET" not in result.env
+
+    def test_proxy_required_raises_when_unreachable(self, workspace, envs_dir, roster):
+        """proxy_required=True raises SystemExit when proxy is not running."""
+        spec = _spec(workspace, envs_dir, proxy_required=True)
+        with (
+            patch("terok_sandbox.is_proxy_socket_active", return_value=False),
+            patch("terok_sandbox.is_proxy_running", return_value=False),
+            pytest.raises(SystemExit, match="Credential proxy is not running"),
+        ):
+            assemble_container_env(spec, roster, caller_manages_proxy=False)
+
+    def test_proxy_not_required_soft_fails(self, workspace, envs_dir, roster):
+        """proxy_required=False (default) returns empty env when proxy is down."""
+        spec = _spec(workspace, envs_dir, proxy_required=False)
+        with (
+            patch("terok_sandbox.is_proxy_socket_active", return_value=False),
+            patch("terok_sandbox.is_proxy_running", return_value=False),
+        ):
+            result = assemble_container_env(spec, roster, caller_manages_proxy=False)
+        assert "TEROK_PROXY_PORT" not in result.env
+
+    def test_proxy_injects_ssh_agent_token(self, workspace, envs_dir, roster, tmp_path):
+        """SSH agent token injected when scope has valid keys in ssh-keys.json."""
+        import json
+
+        from terok_sandbox import CredentialDB, SandboxConfig
+
+        cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
+        cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg.credentials_dir.mkdir(parents=True, exist_ok=True)
+        db = CredentialDB(cfg.proxy_db_path)
+        db.store_credential("default", "claude", {"type": "api_key", "key": "sk-test"})
+        db.close()
+
+        # Write ssh-keys.json with a valid key entry for scope "myproj"
+        cfg.ssh_keys_json_path.write_text(
+            json.dumps(
+                {
+                    "myproj": [
+                        {"private_key": "/tmp/terok-testing/k", "public_key": "ssh-ed25519 AAAA"}
+                    ]
+                }
+            )
+        )
+
+        spec = _spec(workspace, envs_dir, credential_scope="myproj")
+        with (
+            patch("terok_sandbox.is_proxy_socket_active", return_value=True),
+            patch("terok_sandbox.SandboxConfig", return_value=cfg),
+        ):
+            result = assemble_container_env(spec, roster, caller_manages_proxy=False)
+
+        assert "TEROK_SSH_AGENT_TOKEN" in result.env
+        assert result.env["TEROK_SSH_AGENT_TOKEN"].startswith("terok-p-")
+        assert "TEROK_SSH_AGENT_PORT" in result.env
+
+    def test_proxy_no_ssh_keys_omits_token(self, workspace, envs_dir, roster, tmp_path):
+        """No SSH agent token when ssh-keys.json has no entry for scope."""
+        from terok_sandbox import CredentialDB, SandboxConfig
+
+        cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
+        cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = CredentialDB(cfg.proxy_db_path)
+        db.store_credential("default", "claude", {"type": "api_key", "key": "sk-test"})
+        db.close()
+
+        spec = _spec(workspace, envs_dir, credential_scope="no-keys-project")
+        with (
+            patch("terok_sandbox.is_proxy_socket_active", return_value=True),
+            patch("terok_sandbox.SandboxConfig", return_value=cfg),
+        ):
+            result = assemble_container_env(spec, roster, caller_manages_proxy=False)
+
+        assert "TEROK_SSH_AGENT_TOKEN" not in result.env
+        assert "TEROK_SSH_AGENT_PORT" not in result.env
+
+    def test_scan_leaked_creds_emits_warning(self, workspace, envs_dir, roster, capsys):
+        """scan_leaked_creds=True prints warnings to stderr for leaked files."""
+        spec = _spec(workspace, envs_dir, scan_leaked_creds=True)
+        with patch(
+            "terok_executor.credentials.proxy_commands.scan_leaked_credentials",
+            return_value=[
+                ("claude", Path("/tmp/terok-testing/mounts/_claude-config/.credentials.json"))
+            ],
+        ):
+            assemble_container_env(spec, roster, caller_manages_proxy=True)
+        captured = capsys.readouterr()
+        assert "Real credentials in shared mounts" in captured.err
+        assert "claude" in captured.err
+
 
 # ---------------------------------------------------------------------------
 # Task dir
