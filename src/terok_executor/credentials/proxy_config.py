@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
+class ConfigPatchError(RuntimeError):
+    """Raised when a shared config patch fails and the task must not start."""
+
+
 def write_proxy_config(provider_name: str) -> None:
     """Apply ``shared_config_patch`` from the YAML roster after auth.
 
@@ -50,8 +54,8 @@ def write_proxy_config(provider_name: str) -> None:
 
     patch = route.shared_config_patch
     shared_dir = mounts_dir() / auth_info.host_dir_name
-    config_path = shared_dir / patch["file"]
     shared_dir.mkdir(parents=True, exist_ok=True)
+    config_path = _safe_config_path(shared_dir, patch["file"])
 
     if "yaml_set" in patch:
         _apply_yaml_patch(config_path, patch, proxy_url)
@@ -61,12 +65,32 @@ def write_proxy_config(provider_name: str) -> None:
     print(f"Proxy config written to {config_path}")
 
 
+def _safe_config_path(shared_dir: Path, filename: str) -> Path:
+    """Resolve *filename* inside *shared_dir*, rejecting traversal attempts.
+
+    Raises :class:`ConfigPatchError` if the resolved path escapes the
+    intended directory (absolute paths, ``..`` components, symlinks).
+    """
+    rel = Path(filename)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ConfigPatchError(f"invalid patch file path: {filename!r}")
+
+    target = (shared_dir / rel).resolve(strict=False)
+    base = shared_dir.resolve(strict=True)
+    if base not in target.parents and target != base:
+        raise ConfigPatchError(f"patch target {target} escapes shared dir {base}")
+    return target
+
+
 def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
     """Re-apply every ``shared_config_patch`` for the whole roster.
 
     Called during task start so that shared mount directories (which may
     have been recreated empty) always contain the correct proxy URLs.
     Idempotent: safe to call on every launch.
+
+    Raises :class:`ConfigPatchError` on failure — callers must not start
+    the container if proxy routing cannot be established.
     """
     from terok_sandbox import SandboxConfig, get_proxy_port
 
@@ -83,9 +107,10 @@ def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
 
         patch = route.shared_config_patch
         shared_dir = mounts_base / auth_info.host_dir_name
-        config_path = shared_dir / patch["file"]
         # Directory was already created by _shared_config_mounts(); ensure anyway.
         shared_dir.mkdir(parents=True, exist_ok=True)
+
+        config_path = _safe_config_path(shared_dir, patch["file"])
 
         try:
             if "yaml_set" in patch:
@@ -93,8 +118,12 @@ def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
             elif "toml_table" in patch:
                 _apply_toml_patch(config_path, patch, proxy_url)
             _logger.debug("Applied config patch for %s → %s", name, config_path)
-        except Exception:
-            _logger.warning("Failed to apply config patch for %s", name, exc_info=True)
+        except ConfigPatchError:
+            raise
+        except Exception as exc:
+            raise ConfigPatchError(
+                f"Failed to apply proxy config patch for {name} at {config_path}"
+            ) from exc
 
 
 def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
