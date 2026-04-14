@@ -31,7 +31,7 @@ tomli-w = ">=1.0"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = ">=4.0"
-ruff = ">=0.8"
+ruff = ">=0.15.10"
 bandit = ">=1.7"
 docstr-coverage = "^2.3.2"
 complexipy = ">=5.0"
@@ -40,7 +40,7 @@ reuse = "^6.2.0"
 tach = "^0.34.1"
 
 [tool.poetry.group.test.dependencies]
-pytest = ">=7.0"
+pytest = ">=9.0.3"
 pytest-cov = ">=4.0"
 pytest-timeout = ">=2.0"
 
