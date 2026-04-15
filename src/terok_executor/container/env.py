@@ -30,6 +30,9 @@ from typing import TYPE_CHECKING, Literal
 
 from terok_sandbox import Sharing, VolumeSpec
 
+_CONTAINER_RUNTIME_DIR = "/run/terok"
+"""Container-side mount point — must match :data:`terok_sandbox.CONTAINER_RUNTIME_DIR`."""
+
 if TYPE_CHECKING:
     from terok_sandbox import CredentialDB, SandboxConfig
 
@@ -455,7 +458,12 @@ def _inject_proxy_tokens(
 
     if ssh_token:
         env["TEROK_SSH_AGENT_TOKEN"] = ssh_token
-        env["TEROK_SSH_AGENT_PORT"] = str(get_ssh_agent_port(cfg))
+        if use_socket:
+            env["TEROK_SSH_AGENT_SOCKET"] = (
+                f"{_CONTAINER_RUNTIME_DIR}/{cfg.ssh_agent_socket_path.name}"
+            )
+        else:
+            env["TEROK_SSH_AGENT_PORT"] = str(get_ssh_agent_port(cfg))
 
     _logger.debug("Credential proxy: injected %d env vars for %s", len(env), routed)
     return env
