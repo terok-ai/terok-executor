@@ -264,7 +264,9 @@ def _handle_build(
         images = build_base_images(
             base, family=family, agents=selection, rebuild=rebuild, full_rebuild=full_rebuild
         )
-    except BuildError as e:
+    except (BuildError, ValueError) as e:
+        # ValueError is raised by resolve_selection() for unknown agent names
+        # — surface it as a clean CLI message rather than a traceback.
         raise SystemExit(str(e)) from e
     print(f"\nL0: {images.l0}")
     print(f"L1: {images.l1}")

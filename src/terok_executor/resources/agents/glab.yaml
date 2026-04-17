@@ -22,17 +22,23 @@ auth:
   api_key_hint: "Create a personal access token at: https://gitlab.com/-/user_settings/personal_access_tokens"
 
 install:
+  # pipefail is needed because the checksum verification is a pipeline
+  # (grep | sed | sha256sum -c -); without it, an empty grep result would
+  # silently feed sha256sum nothing and exit 0, skipping verification.
   run_as_root: |
-    RUN set -eux; \
-        GLAB_VERSION=$(curl -sSL "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest" \
+    RUN set -eux -o pipefail; \
+        GLAB_VERSION=$(curl --fail -sSL "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest" \
           | jq -r '.tag_name | ltrimstr("v")'); \
         ARCH=$(dpkg --print-architecture); \
         DEB_NAME="glab_${GLAB_VERSION}_linux_${ARCH}.deb"; \
-        curl -sSL -o /tmp/glab.deb \
+        curl --fail -sSL -o /tmp/glab.deb \
           "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/${DEB_NAME}"; \
-        curl -sSL -o /tmp/checksums.txt \
+        curl --fail -sSL -o /tmp/checksums.txt \
           "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/checksums.txt"; \
-        grep "  ${DEB_NAME}$" /tmp/checksums.txt | sed "s|${DEB_NAME}|/tmp/glab.deb|" | sha256sum -c -; \
+        grep -q "  ${DEB_NAME}$" /tmp/checksums.txt \
+          || { echo "no checksum entry for ${DEB_NAME}" >&2; exit 1; }; \
+        grep "  ${DEB_NAME}$" /tmp/checksums.txt \
+          | sed "s|${DEB_NAME}|/tmp/glab.deb|" | sha256sum -c -; \
         dpkg -i /tmp/glab.deb; \
         rm -f /tmp/glab.deb /tmp/checksums.txt
 

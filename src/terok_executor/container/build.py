@@ -66,6 +66,27 @@ INSTALLED_ENV_PATH = "/etc/terok/installed.env"
 _HELP_SECTION_FILES: dict[str, str] = {"agent": "agents.txt", "dev_tool": "dev-tools.txt"}
 """Maps each :class:`~terok_executor.roster.loader.HelpSection` to its fragment filename."""
 
+_ESCAPE_RE = re.compile(r"\\(?:[0-7]{1,3}|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[nrtbfav\\'\"])")
+"""Backslash escapes recognised in roster ``help.label`` strings.
+
+Matches octal (``\\033``), hex (``\\x1b``), 4-digit Unicode (``\\u1234``),
+and the standard one-letter forms — nothing wider, so the surrounding
+text (which may contain non-ASCII characters) is preserved verbatim.
+"""
+
+
+def _decode_label_escapes(text: str) -> str:
+    """Expand backslash escapes in *text* without disturbing non-ASCII content.
+
+    The straight ``bytes(text, "utf-8").decode("unicode_escape")`` round-trip
+    re-interprets every UTF-8 byte as Latin-1 and mojibakes anything outside
+    ASCII (e.g. ``"ä"`` becomes ``"Ã¤"``).  We only want to expand explicit
+    backslash escapes, so we substitute one match at a time — each match
+    is pure ASCII, making the per-match round-trip safe.
+    """
+    return _ESCAPE_RE.sub(lambda m: m.group().encode("ascii").decode("unicode_escape"), text)
+
+
 _DEFAULT_TAG = "ubuntu-24.04"
 """Pre-sanitized tag fragment for the default base image."""
 
@@ -518,7 +539,7 @@ def stage_help_fragments(dest: Path, agents: tuple[str, ...]) -> None:
         shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     for section, lines in by_section.items():
-        decoded = "".join(bytes(line, "utf-8").decode("unicode_escape") + "\n" for line in lines)
+        decoded = "".join(_decode_label_escapes(line) + "\n" for line in lines)
         (dest / _HELP_SECTION_FILES[section]).write_text(decoded, encoding="utf-8")
 
 

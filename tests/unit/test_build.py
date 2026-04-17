@@ -541,6 +541,15 @@ class TestStageHelpFragments:
         stage_help_fragments(dest, ("claude",))
         assert not (dest / "dev-tools.txt").exists()
 
+    def test_decoder_preserves_non_ascii(self) -> None:
+        """The escape decoder must not mojibake non-ASCII characters."""
+        from terok_executor.container.build import _decode_label_escapes
+
+        # bytes(s, "utf-8").decode("unicode_escape") would produce 'Ã¤' here.
+        assert _decode_label_escapes(r"\033[36m→ ähnlich\033[0m") == (
+            "\x1b[36m→ ähnlich\x1b[0m"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Sidecar image build
