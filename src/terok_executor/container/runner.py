@@ -58,8 +58,10 @@ class AgentRunner:
         sandbox: Sandbox | None = None,
         roster: AgentRoster | None = None,
         base_image: str = "ubuntu:24.04",
+        family: str | None = None,
     ) -> None:
         self._base_image = base_image
+        self._family = family
         self._sandbox: Sandbox | None = sandbox
         self._roster: AgentRoster | None = roster
 
@@ -476,14 +478,14 @@ class AgentRunner:
 
     def _ensure_images(self) -> str:
         """Ensure L0+L1 images exist, return L1 tag."""
-        images = build_base_images(self._base_image)
+        images = build_base_images(self._base_image, family=self._family)
         return images.l1
 
     def _ensure_sidecar_image(self, tool_name: str) -> str:
         """Ensure sidecar L1 exists for *tool_name*, return its tag."""
         from .build import build_sidecar_image
 
-        return build_sidecar_image(self._base_image, tool_name=tool_name)
+        return build_sidecar_image(self._base_image, family=self._family, tool_name=tool_name)
 
     def _setup_gate(self, repo_url: str, task_id: str) -> str:
         """Mirror a repo via the sandbox gate and return the gate HTTP URL.

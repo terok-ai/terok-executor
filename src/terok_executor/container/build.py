@@ -136,22 +136,6 @@ def detect_family(base_image: str, override: str | None = None) -> str:
     )
 
 
-def _split_image_ref(ref: str) -> tuple[str, str]:
-    """Split an OCI image reference into ``(name_without_tag, tag)``.
-
-    Strips an optional ``@digest`` suffix first, then peels off the
-    trailing ``:tag`` only when the last ``:`` lies after the last ``/``
-    — so ``localhost:5000/ubuntu:24.04`` keeps the registry port intact
-    in *name* and yields ``"24.04"`` as *tag*.  Refs without a tag
-    return an empty string for *tag*.
-    """
-    name = ref.split("@", 1)[0]  # drop digest
-    if name.rfind(":") > name.rfind("/"):
-        name, _, tag = name.rpartition(":")
-        return name, tag
-    return name, ""
-
-
 def build_base_images(
     base_image: str = DEFAULT_BASE_IMAGE,
     *,
@@ -491,6 +475,22 @@ def _validate_build_dir(build_dir: Path | None) -> None:
 def _normalize_base_image(base_image: str | None) -> str:
     """Normalize a base image string, falling back to the default."""
     return (base_image or "").strip() or DEFAULT_BASE_IMAGE
+
+
+def _split_image_ref(ref: str) -> tuple[str, str]:
+    """Split an OCI image reference into ``(name_without_tag, tag)``.
+
+    Strips an optional ``@digest`` suffix first, then peels off the
+    trailing ``:tag`` only when the last ``:`` lies after the last ``/``
+    — so ``localhost:5000/ubuntu:24.04`` keeps the registry port intact
+    in *name* and yields ``"24.04"`` as *tag*.  Refs without a tag
+    return an empty string for *tag*.
+    """
+    name = ref.split("@", 1)[0]  # drop digest
+    if name.rfind(":") > name.rfind("/"):
+        name, _, tag = name.rpartition(":")
+        return name, tag
+    return name, ""
 
 
 def _base_tag(base_image: str) -> str:

@@ -92,13 +92,15 @@ def _handle_run(
     git_identity_from_host: bool = False,
     shared_dir: str | None = None,
     shared_mount: str = "/shared",
+    base: str = "ubuntu:24.04",
+    family: str | None = None,
 ) -> None:
     """Run an agent in a hardened container."""
     import sys
 
     from .preflight import run_preflight
 
-    if not run_preflight(agent, interactive=sys.stdin.isatty()):
+    if not run_preflight(agent, interactive=sys.stdin.isatty(), base_image=base, family=family):
         raise SystemExit(1)
 
     from .container.runner import AgentRunner
@@ -114,7 +116,7 @@ def _handle_run(
             print("Warning: --git-identity-from-host: git config user.name not set, skipping")
 
     effective_gate = gate and not no_gate
-    runner = AgentRunner()
+    runner = AgentRunner(base_image=base, family=family)
     resolved_shared_dir = Path(shared_dir) if shared_dir else None
     common: dict = {
         "gate": effective_gate,
@@ -165,12 +167,14 @@ def _handle_run_tool(
     name: str | None = None,
     timeout: int = 600,
     tool_args: list[str] | None = None,
+    base: str = "ubuntu:24.04",
+    family: str | None = None,
 ) -> None:
     """Run a tool in a sidecar container."""
     from .container.runner import AgentRunner
 
     effective_gate = gate and not no_gate
-    runner = AgentRunner()
+    runner = AgentRunner(base_image=base, family=family)
     cname = runner.run_tool(
         tool,
         repo,
@@ -243,6 +247,7 @@ def _handle_agents(*, show_all: bool = False) -> None:
 def _handle_build(
     *,
     base: str = "ubuntu:24.04",
+    family: str | None = None,
     rebuild: bool = False,
     full_rebuild: bool = False,
     sidecar: bool = False,
@@ -251,7 +256,7 @@ def _handle_build(
     from .container.build import BuildError, build_base_images, build_sidecar_image
 
     try:
-        images = build_base_images(base, rebuild=rebuild, full_rebuild=full_rebuild)
+        images = build_base_images(base, family=family, rebuild=rebuild, full_rebuild=full_rebuild)
     except BuildError as e:
         raise SystemExit(str(e)) from e
     print(f"\nL0: {images.l0}")
@@ -259,7 +264,9 @@ def _handle_build(
 
     if sidecar:
         try:
-            tag = build_sidecar_image(base, rebuild=rebuild, full_rebuild=full_rebuild)
+            tag = build_sidecar_image(
+                base, family=family, rebuild=rebuild, full_rebuild=full_rebuild
+            )
         except BuildError as e:
             raise SystemExit(str(e)) from e
         print(f"L1 (sidecar): {tag}")
@@ -376,6 +383,12 @@ RUN_COMMAND = CommandDef(
             default="/shared",
             help="Container mount point for shared dir (default: /shared)",
         ),
+        ArgDef(name="--base", default="ubuntu:24.04", help="Base OS image (default: ubuntu:24.04)"),
+        ArgDef(
+            name="--family",
+            default=None,
+            help="Override package family for unknown base images (deb or rpm)",
+        ),
     ),
 )
 
@@ -392,6 +405,12 @@ RUN_TOOL_COMMAND = CommandDef(
         ArgDef(name="--name", help="Container name override"),
         ArgDef(name="--timeout", type=int, default=600, help="Timeout in seconds (default: 600)"),
         ArgDef(name="tool_args", nargs="*", help="Extra args passed to the tool (after --)"),
+        ArgDef(name="--base", default="ubuntu:24.04", help="Base OS image (default: ubuntu:24.04)"),
+        ArgDef(
+            name="--family",
+            default=None,
+            help="Override package family for unknown base images (deb or rpm)",
+        ),
     ),
 )
 
@@ -420,6 +439,11 @@ BUILD_COMMAND = CommandDef(
     handler=_handle_build,
     args=(
         ArgDef(name="--base", default="ubuntu:24.04", help="Base OS image (default: ubuntu:24.04)"),
+        ArgDef(
+            name="--family",
+            default=None,
+            help="Override package family for unknown base images (deb or rpm)",
+        ),
         ArgDef(name="--rebuild", action="store_true", help="Force rebuild (cache bust)"),
         ArgDef(name="--full-rebuild", action="store_true", help="Force --no-cache --pull=always"),
         ArgDef(name="--sidecar", action="store_true", help="Also build sidecar L1 (CodeRabbit)"),

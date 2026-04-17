@@ -157,12 +157,12 @@ def _fix_credentials(provider: str) -> bool:
     return True
 
 
-def _fix_images(base_image: str) -> bool:
+def _fix_images(base_image: str, family: str | None = None) -> bool:
     """Build L0+L1 container images."""
     from terok_executor.container.build import BuildError, build_base_images
 
     try:
-        build_base_images(base_image)
+        build_base_images(base_image, family=family)
         return True
     except BuildError as exc:
         print(f"  Build failed: {exc}", file=sys.stderr)
@@ -194,6 +194,7 @@ def run_preflight(
     *,
     interactive: bool = True,
     base_image: str = "ubuntu:24.04",
+    family: str | None = None,
 ) -> bool:
     """Run all prerequisite checks; fix interactively if possible.
 
@@ -239,7 +240,7 @@ def run_preflight(
     if not r.ok and interactive:
         print(f"  [{4}/{total}] {r.name}... {r.message}")
         print("      Building agent images (this may take a few minutes)...")
-        fixed = _fix_images(base_image)
+        fixed = _fix_images(base_image, family=family)
         r = CheckResult(r.name, fixed, "built" if fixed else "build failed")
     _print_step(4, total, r)
     if not r.ok:

@@ -297,7 +297,7 @@ class TestTemplateRendering:
         # Use family override to keep the test independent of the prefix
         # allowlist.
         content = render_l0("busybox:1.36", family="deb")
-        assert "ARG BASE_IMAGE=" in content
+        assert "ARG BASE_IMAGE=busybox:1.36" in content
         assert "FROM ${BASE_IMAGE}" in content
 
     def test_l0_renders_with_custom_base(self) -> None:
