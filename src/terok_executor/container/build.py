@@ -93,6 +93,17 @@ def _decode_label_escapes(text: str) -> str:
 _DEFAULT_TAG = "ubuntu-24.04"
 """Pre-sanitized tag fragment for the default base image."""
 
+_MAX_TAG_LEN = 120
+"""Cap on the tag portion of an OCI image reference.
+
+OCI spec allows 128; the extra headroom absorbs future suffix changes
+without rebuilding history.  Both :func:`_base_tag` (for the L0 tag)
+and :func:`l1_image_tag` (for the L1 base+agents tag) respect this.
+"""
+
+_AGENT_DIGEST_LEN = 12
+"""SHA1-prefix length for the fallback agent-suffix digest."""
+
 # Map of known base-image prefixes to their package family.  Each entry
 # is either a literal ``"deb"``/``"rpm"`` or a tag-aware resolver — used
 # for NVIDIA, where the same repo path ships both Ubuntu (apt) and UBI
@@ -580,12 +591,29 @@ def l1_image_tag(base_image: str, agents: tuple[str, ...] | None = None) -> str:
     Agent name fragments are passed through the same ``_base_tag``
     sanitiser to keep the final tag within the OCI tag charset
     (``[A-Za-z0-9_.-]``).
+
+    The full tag (after ``:``) is bounded by :data:`_MAX_TAG_LEN`.  When
+    the readable ``base-a-b-c`` form would overflow, the agent portion
+    is replaced with a SHA1 digest of the sorted selection — same
+    collision-resistant fallback pattern :func:`_base_tag` uses
+    internally for overlong image names.
     """
-    base = f"terok-l1-cli:{_base_tag(base_image)}"
+    base_tag = _base_tag(base_image)
     if agents is None:
-        return base
-    suffix = "-".join(_base_tag(a) for a in sorted(agents)) if agents else "empty"
-    return f"{base}-{suffix}"
+        return f"terok-l1-cli:{base_tag}"
+    readable_suffix = "-".join(_base_tag(a) for a in sorted(agents)) if agents else "empty"
+    if len(base_tag) + 1 + len(readable_suffix) <= _MAX_TAG_LEN:
+        return f"terok-l1-cli:{base_tag}-{readable_suffix}"
+    suffix = hashlib.sha1(
+        ",".join(sorted(agents)).encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:_AGENT_DIGEST_LEN]
+    # Pathological case: a base already near _MAX_TAG_LEN leaves no room
+    # even for the digest.  Trim base_tag further — same collision-resistant
+    # shape as the digest fallback itself.
+    max_base = _MAX_TAG_LEN - 1 - _AGENT_DIGEST_LEN
+    if len(base_tag) > max_base:
+        base_tag = base_tag[:max_base]
+    return f"terok-l1-cli:{base_tag}-{suffix}"
 
 
 def l1_sidecar_image_tag(base_image: str) -> str:

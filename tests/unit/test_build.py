@@ -80,6 +80,46 @@ class TestImageNaming:
         # Edge case: empty selection still produces a distinct, addressable tag.
         assert l1_image_tag("ubuntu:24.04", ()) == "terok-l1-cli:ubuntu-24.04-empty"
 
+    def test_l1_tag_fits_oci_limit_for_worst_realistic_base(self) -> None:
+        # Longest base we currently presets (podman+all-agents) must fit.
+        tag = l1_image_tag(
+            "quay.io/podman/stable:latest",
+            (
+                "blablador",
+                "claude",
+                "codex",
+                "copilot",
+                "gh",
+                "glab",
+                "kisski",
+                "opencode",
+                "sonar",
+                "toad",
+                "vibe",
+            ),
+        )
+        _, _, tag_part = tag.partition(":")
+        assert len(tag_part) <= 128  # OCI spec
+        assert "blablador" in tag  # readable form still won
+
+    def test_l1_tag_digests_when_combined_overflows(self) -> None:
+        # Synthesise a base that by itself is near the cap so the readable
+        # agent suffix would push past the limit; digest takes over.
+        long_base = "registry.example.internal/" + "x" * 100 + ":latest"
+        tag = l1_image_tag(long_base, ("claude", "codex", "gh"))
+        _, _, tag_part = tag.partition(":")
+        assert len(tag_part) <= 128
+        # Agent suffix replaced by a 12-char hex digest — no readable names.
+        assert "claude" not in tag and "codex" not in tag
+
+    def test_l1_tag_digest_is_stable_and_selection_sensitive(self) -> None:
+        long_base = "registry.example.internal/" + "x" * 100 + ":latest"
+        a = l1_image_tag(long_base, ("claude", "codex"))
+        b = l1_image_tag(long_base, ("codex", "claude"))  # same set, reordered
+        c = l1_image_tag(long_base, ("claude", "gh"))  # different set
+        assert a == b
+        assert a != c
+
     def test_image_set(self) -> None:
         s = ImageSet(l0="terok-l0:test", l1="terok-l1-cli:test")
         assert s.l0 == "terok-l0:test"
