@@ -1,17 +1,19 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Patches provider config files to route API traffic through the credential proxy.
+"""Patches provider config files to route API traffic through the vault.
 
 Applies ``shared_config_patch`` from the YAML roster after authentication
-and — crucially — on every task start.  Writes proxy URLs (not secrets) to
+and — crucially — on every task start.  Writes vault URLs (not secrets) to
 provider config files so that agents route API traffic through the
-credential proxy instead of hitting upstream directly with phantom tokens.
+vault instead of hitting upstream directly with phantom tokens.
 """
 
 from __future__ import annotations
 
+import errno
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,13 +32,13 @@ def write_proxy_config(provider_name: str) -> None:
     """Apply ``shared_config_patch`` from the YAML roster after auth.
 
     Patches a TOML or YAML config file in the provider's shared config dir
-    to redirect API traffic through the credential proxy.  The patch spec
+    to redirect API traffic through the vault.  The patch spec
     is declared in the agent YAML — no provider-specific code needed.
     """
     from terok_executor.roster.loader import get_roster
 
     roster = get_roster()
-    route = roster.proxy_routes.get(provider_name)
+    route = roster.vault_routes.get(provider_name)
     if not route or not route.shared_config_patch:
         return
 
@@ -44,12 +46,12 @@ def write_proxy_config(provider_name: str) -> None:
     if not auth_info:
         return
 
-    from terok_sandbox import SandboxConfig, get_proxy_port
+    from terok_sandbox import SandboxConfig, get_token_broker_port
 
     from terok_executor.paths import mounts_dir
 
     cfg = SandboxConfig()
-    port = get_proxy_port(cfg)
+    port = get_token_broker_port(cfg)
     proxy_url = f"http://host.containers.internal:{port}"
 
     patch = route.shared_config_patch
@@ -62,26 +64,26 @@ def write_proxy_config(provider_name: str) -> None:
     elif "toml_table" in patch:
         _apply_toml_patch(config_path, patch, proxy_url)
 
-    print(f"Proxy config written to {config_path}")
+    print(f"Vault config written to {config_path}")
 
 
 def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
     """Re-apply every ``shared_config_patch`` for the whole roster.
 
     Called during task start so that shared mount directories (which may
-    have been recreated empty) always contain the correct proxy URLs.
+    have been recreated empty) always contain the correct vault URLs.
     Idempotent: safe to call on every launch.
 
     Raises :class:`ConfigPatchError` on failure — callers must not start
-    the container if proxy routing cannot be established.
+    the container if vault routing cannot be established.
     """
-    from terok_sandbox import SandboxConfig, get_proxy_port
+    from terok_sandbox import SandboxConfig, get_token_broker_port
 
     cfg = SandboxConfig()
-    port = get_proxy_port(cfg)
+    port = get_token_broker_port(cfg)
     proxy_url = f"http://host.containers.internal:{port}"
 
-    for name, route in roster.proxy_routes.items():
+    for name, route in roster.vault_routes.items():
         if not route.shared_config_patch:
             continue
         auth_info = roster.auth_providers.get(name)
@@ -103,7 +105,7 @@ def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
             raise
         except Exception as exc:
             raise ConfigPatchError(
-                f"Failed to apply proxy config patch for {name} (file={patch.get('file')!r})"
+                f"Failed to apply vault config patch for {name} (file={patch.get('file')!r})"
             ) from exc
 
 
@@ -115,6 +117,12 @@ def _safe_config_path(shared_dir: Path, filename: str) -> Path:
 
     Raises :class:`ConfigPatchError` if the resolved path escapes the
     intended directory (absolute paths, ``..`` components, symlinks).
+
+    Note: this check is TOCTOU-racy against a container that can plant
+    symlinks between the check here and the subsequent write.  Callers
+    MUST use :func:`_read_nofollow` / :func:`_write_nofollow` to open
+    the final file, so a symlink planted in the race window is rejected
+    at open() time (``ELOOP``) instead of being silently followed.
     """
     rel = Path(filename)
     if rel.is_absolute() or ".." in rel.parts:
@@ -127,13 +135,62 @@ def _safe_config_path(shared_dir: Path, filename: str) -> Path:
     return target
 
 
+def _read_nofollow(path: Path) -> bytes | None:
+    """Read *path* refusing to follow symlinks; return ``None`` if missing.
+
+    The shared config directories are bind-mounted read-write into task
+    containers, so an attacker can plant a symlink between the
+    :func:`_safe_config_path` check and this read.  ``O_NOFOLLOW``
+    rejects that at open() time.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ConfigPatchError(f"refusing to read through symlink at {path}") from exc
+        raise
+    try:
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 65536):
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _write_nofollow(path: Path, data: bytes) -> None:
+    """Write *data* to *path* refusing to follow symlinks.
+
+    A planted symlink at *path* is rejected with :class:`ConfigPatchError`
+    (via ``ELOOP``) rather than silently followed — protecting against a
+    compromised container redirecting the executor's write to an
+    arbitrary operator-owned file (CWE-367 / CWE-59).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o644)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ConfigPatchError(f"refusing to write through symlink at {path}") from exc
+        raise
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
+
 def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
     """Patch a TOML array-of-tables entry."""
     import tomllib
 
-    if config_path.is_file():
+    raw = _read_nofollow(config_path)
+    if raw is not None:
         try:
-            existing = tomllib.loads(config_path.read_text())
+            existing = tomllib.loads(raw.decode("utf-8"))
         except Exception as exc:
             print(
                 f"Warning [proxy-config]: failed to parse {config_path}: "
@@ -164,18 +221,21 @@ def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
 
     import tomli_w
 
-    config_path.write_bytes(tomli_w.dumps(existing).encode())
+    _write_nofollow(config_path, tomli_w.dumps(existing).encode("utf-8"))
 
 
 def _apply_yaml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
     """Set top-level keys in a YAML config file."""
+    import io
+
     from ruamel.yaml import YAML
 
     yaml = YAML()
     yaml.preserve_quotes = True
-    if config_path.is_file():
+    raw = _read_nofollow(config_path)
+    if raw is not None:
         try:
-            existing = yaml.load(config_path)
+            existing = yaml.load(raw)
         except Exception as exc:
             print(
                 f"Warning [proxy-config]: failed to parse {config_path}: "
@@ -191,4 +251,6 @@ def _apply_yaml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
     for k, v in patch["yaml_set"].items():
         existing[k] = v.replace("{proxy_url}", proxy_url) if isinstance(v, str) else v
 
-    yaml.dump(existing, config_path)
+    buf = io.BytesIO()
+    yaml.dump(existing, buf)
+    _write_nofollow(config_path, buf.getvalue())
