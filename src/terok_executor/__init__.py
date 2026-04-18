@@ -33,7 +33,9 @@ from .commands import COMMANDS as AGENT_COMMANDS, CommandDef
 
 # -- Container (build, env assembly, runner) -----------------------------------
 from .container.build import (
+    AGENTS_LABEL,
     DEFAULT_BASE_IMAGE,
+    INSTALLED_ENV_PATH,
     BuildError,
     ImageSet,
     build_base_images,
@@ -87,7 +89,13 @@ from .provider.providers import (
 )
 
 # -- Roster (agent catalog + config resolution) --------------------------------
-from .roster import CredentialProxyRoute, SidecarSpec, ensure_proxy_routes, get_roster
+from .roster import (
+    CredentialProxyRoute,
+    SidecarSpec,
+    ensure_proxy_routes,
+    get_roster,
+    parse_agent_selection,
+)
 
 # -- Storage queries (filesystem footprint measurement) -------------------------
 from .storage import (
@@ -149,7 +157,9 @@ __all__ = [
     "ConfigStack",
     "resolve_provider_value",
     # Build: image construction + resource staging
+    "AGENTS_LABEL",
     "DEFAULT_BASE_IMAGE",
+    "INSTALLED_ENV_PATH",
     "BuildError",
     "ImageSet",
     "build_base_images",
@@ -169,6 +179,7 @@ __all__ = [
     # Roster
     "SidecarSpec",
     "get_roster",
+    "parse_agent_selection",
     # Command registry
     "AGENT_COMMANDS",
     "PROXY_COMMANDS",

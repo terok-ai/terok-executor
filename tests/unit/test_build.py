@@ -26,6 +26,7 @@ from terok_executor.container.build import (
     render_l0,
     render_l1,
     render_l1_sidecar,
+    stage_help_fragments,
     stage_scripts,
     stage_tmux_config,
     stage_toad_agents,
@@ -62,6 +63,62 @@ class TestImageNaming:
 
     def test_l1_tag(self) -> None:
         assert l1_image_tag("ubuntu:24.04") == "terok-l1-cli:ubuntu-24.04"
+
+    def test_l1_tag_with_agents(self) -> None:
+        assert (
+            l1_image_tag("ubuntu:24.04", ("claude", "codex"))
+            == "terok-l1-cli:ubuntu-24.04-claude-codex"
+        )
+
+    def test_l1_tag_agents_sorted(self) -> None:
+        # Suffix is canonicalised regardless of input order.
+        assert l1_image_tag("ubuntu:24.04", ("codex", "claude")) == l1_image_tag(
+            "ubuntu:24.04", ("claude", "codex")
+        )
+
+    def test_l1_tag_empty_selection(self) -> None:
+        # Edge case: empty selection still produces a distinct, addressable tag.
+        assert l1_image_tag("ubuntu:24.04", ()) == "terok-l1-cli:ubuntu-24.04-empty"
+
+    def test_l1_tag_fits_oci_limit_for_worst_realistic_base(self) -> None:
+        # Longest base we currently presets (podman+all-agents) must fit.
+        tag = l1_image_tag(
+            "quay.io/podman/stable:latest",
+            (
+                "blablador",
+                "claude",
+                "codex",
+                "copilot",
+                "gh",
+                "glab",
+                "kisski",
+                "opencode",
+                "sonar",
+                "toad",
+                "vibe",
+            ),
+        )
+        _, _, tag_part = tag.partition(":")
+        assert len(tag_part) <= 128  # OCI spec
+        assert "blablador" in tag  # readable form still won
+
+    def test_l1_tag_digests_when_combined_overflows(self) -> None:
+        # Synthesise a base that by itself is near the cap so the readable
+        # agent suffix would push past the limit; digest takes over.
+        long_base = "registry.example.internal/" + "x" * 100 + ":latest"
+        tag = l1_image_tag(long_base, ("claude", "codex", "gh"))
+        _, _, tag_part = tag.partition(":")
+        assert len(tag_part) <= 128
+        # Agent suffix replaced by a 12-char hex digest — no readable names.
+        assert "claude" not in tag and "codex" not in tag
+
+    def test_l1_tag_digest_is_stable_and_selection_sensitive(self) -> None:
+        long_base = "registry.example.internal/" + "x" * 100 + ":latest"
+        a = l1_image_tag(long_base, ("claude", "codex"))
+        b = l1_image_tag(long_base, ("codex", "claude"))  # same set, reordered
+        c = l1_image_tag(long_base, ("claude", "gh"))  # different set
+        assert a == b
+        assert a != c
 
     def test_image_set(self) -> None:
         s = ImageSet(l0="terok-l0:test", l1="terok-l1-cli:test")
@@ -323,6 +380,33 @@ class TestTemplateRendering:
         content = render_l1("terok-l0:nvidia-cuda-12.4", family="deb")
         assert "FROM" in content
 
+    def test_l1_label_lists_selection(self) -> None:
+        content = render_l1("terok-l0:test", family="deb", agents=("claude", "codex"))
+        assert 'LABEL ai.terok.agents="claude,codex"' in content
+
+    def test_l1_omits_unselected_agents(self) -> None:
+        # Selecting only claude should not pull in vibe's pipx install.
+        content = render_l1("terok-l0:test", family="deb", agents=("claude",))
+        assert "claude.ai/install" in content
+        assert "pipx install mistral-vibe" not in content
+
+    def test_l1_resolves_transitive_deps(self) -> None:
+        # blablador depends_on opencode → opencode install must appear.
+        content = render_l1("terok-l0:test", family="deb", agents=("blablador",))
+        assert "opencode.ai/install" in content
+        assert 'LABEL ai.terok.agents="blablador,opencode"' in content
+
+    def test_l1_unknown_agent_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown roster entries"):
+            render_l1("terok-l0:test", family="deb", agents=("not-a-real-agent",))
+
+    def test_l1_bare_string_selection_rejected(self) -> None:
+        # A bare agent name passed as a string would otherwise be iterated
+        # into characters ({'c','l','a','u','d','e'}) — the guard catches
+        # that misuse instead of raising a confusing ValueError.
+        with pytest.raises(TypeError, match="'all' or a tuple"):
+            render_l1("terok-l0:test", family="deb", agents="claude")
+
     def test_l1_sidecar_is_valid_dockerfile(self) -> None:
         content = render_l1_sidecar("terok-l0:test", family="deb")
         assert content.startswith("# syntax=docker")
@@ -477,6 +561,39 @@ class TestStageTmuxConfig:
         dest = tmp_path / "tmux"
         stage_tmux_config(dest)
         assert not (dest / "__init__.py").exists()
+
+
+class TestStageHelpFragments:
+    """Verify per-section help fragment rendering for ``hilfe``."""
+
+    def test_splits_by_section(self, tmp_path: Path) -> None:
+        dest = tmp_path / "help.d"
+        stage_help_fragments(dest, ("claude", "gh"))
+        assert (dest / "agents.txt").is_file()
+        assert (dest / "dev-tools.txt").is_file()
+        assert "claude" in (dest / "agents.txt").read_text()
+        assert "gh" in (dest / "dev-tools.txt").read_text()
+
+    def test_decodes_ansi_escapes(self, tmp_path: Path) -> None:
+        dest = tmp_path / "help.d"
+        stage_help_fragments(dest, ("claude",))
+        # \033 in the YAML must land as the literal ESC byte in the file so
+        # that hilfe just `cat`s and gets coloured output.
+        assert "\x1b[" in (dest / "agents.txt").read_text()
+        assert r"\033[" not in (dest / "agents.txt").read_text()
+
+    def test_omits_empty_sections(self, tmp_path: Path) -> None:
+        # Selecting only an agent (no dev_tool) leaves dev-tools.txt absent.
+        dest = tmp_path / "help.d"
+        stage_help_fragments(dest, ("claude",))
+        assert not (dest / "dev-tools.txt").exists()
+
+    def test_decoder_preserves_non_ascii(self) -> None:
+        """The escape decoder must not mojibake non-ASCII characters."""
+        from terok_executor.container.build import _decode_label_escapes
+
+        # bytes(s, "utf-8").decode("unicode_escape") would produce 'Ã¤' here.
+        assert _decode_label_escapes(r"\033[36m→ ähnlich\033[0m") == ("\x1b[36m→ ähnlich\x1b[0m")
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +824,7 @@ class TestRenderFamilyAware:
         assert "deb.nodesource.com/setup_22.x" in content
         assert "/etc/apt/keyrings/githubcli" in content
         assert "glab_${GLAB_VERSION}_linux_${ARCH}.deb" in content
-        assert "dpkg -i /tmp/glab.pkg" in content
+        assert "dpkg -i /tmp/glab.deb" in content
 
     def test_l1_rpm_uses_dnf_and_rpm_repos(self) -> None:
         content = render_l1("terok-l0:test", family="rpm")
@@ -715,7 +832,9 @@ class TestRenderFamilyAware:
         assert "rpm.nodesource.com/setup_22.x" in content
         assert "/etc/yum.repos.d/gh-cli.repo" in content
         assert "glab_${GLAB_VERSION}_linux_${ARCH}.rpm" in content
-        assert "dnf install -y /tmp/glab.pkg" in content
+        # Filename must carry .rpm extension — dnf5 refuses local installs
+        # of files named anything else (treats them as repo queries).
+        assert "dnf install -y /tmp/glab.rpm" in content
         assert "apt-get" not in content
         assert "dpkg" not in content
 
@@ -801,7 +920,8 @@ class TestBuildBaseImagesFamily:
             result = build_base_images("rockylinux:9")
 
         assert result.l0.endswith(":rockylinux-9")
-        assert result.l1.endswith(":rockylinux-9")
+        # L1 tag carries the default agent-suffix on top of the base fragment.
+        assert result.l1.startswith("terok-l1-cli:rockylinux-9-")
         mock_detect.assert_not_called()
 
 
