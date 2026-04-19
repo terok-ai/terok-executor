@@ -31,7 +31,7 @@ from .build import BuildError, build_base_images
 if TYPE_CHECKING:
     import subprocess
 
-    from terok_sandbox import LifecycleHooks, Sandbox
+    from terok_sandbox import ContainerRuntime, LifecycleHooks, Sandbox
 
     from terok_executor.roster.loader import AgentRoster
 
@@ -58,6 +58,7 @@ class AgentRunner:
         self,
         *,
         sandbox: Sandbox | None = None,
+        runtime: ContainerRuntime | None = None,
         roster: AgentRoster | None = None,
         base_image: str = "ubuntu:24.04",
         family: str | None = None,
@@ -65,6 +66,7 @@ class AgentRunner:
         self._base_image = base_image
         self._family = family
         self._sandbox: Sandbox | None = sandbox
+        self._runtime: ContainerRuntime | None = runtime
         self._roster: AgentRoster | None = roster
 
     # ------------------------------------------------------------------
@@ -73,12 +75,28 @@ class AgentRunner:
 
     @property
     def sandbox(self) -> Sandbox:
-        """Lazy-init sandbox facade."""
+        """Lazy-init sandbox facade.
+
+        When an explicit ``runtime`` was supplied but no ``sandbox``, the
+        sandbox is constructed with that same runtime so the two share
+        one backend instance.
+        """
         if self._sandbox is None:
             from terok_sandbox import Sandbox
 
-            self._sandbox = Sandbox()
+            self._sandbox = Sandbox(runtime=self._runtime)
         return self._sandbox
+
+    @property
+    def runtime(self) -> ContainerRuntime:
+        """Return the container runtime used for observation and lifecycle.
+
+        Falls back to the sandbox's runtime when the caller did not
+        supply one — keeps the two in sync by construction.
+        """
+        if self._runtime is None:
+            self._runtime = self.sandbox.runtime
+        return self._runtime
 
     @property
     def roster(self) -> AgentRoster:
@@ -214,9 +232,8 @@ class AgentRunner:
         If *port* is None, an available port is auto-allocated.
         """
         if port is None:
-            from terok_sandbox import find_free_port
-
-            port = find_free_port()
+            with self.runtime.reserve_port() as reservation:
+                port = reservation.port
         return self._run(
             provider="claude",  # toad uses claude as default
             repo=repo,

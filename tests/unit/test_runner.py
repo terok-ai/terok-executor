@@ -188,12 +188,21 @@ class TestAgentRunner:
 
     def test_run_web_auto_allocates_port(self, tmp_path: Path) -> None:
         """Web mode auto-allocates a port when none given."""
+        from unittest.mock import MagicMock as _Mock
+
         sandbox = _mock_sandbox()
         runner = AgentRunner(sandbox=sandbox)
 
+        reservation = _Mock()
+        reservation.port = 12345
+        reservation.__enter__ = lambda self: self
+        reservation.__exit__ = lambda self, *exc: None
+        runtime_mock = _Mock()
+        runtime_mock.reserve_port.return_value = reservation
+
         with (
             patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch("terok_sandbox.find_free_port", return_value=12345),
+            patch.object(AgentRunner, "runtime", runtime_mock),
         ):
             runner.run_web(str(tmp_path))  # no port= arg
 
