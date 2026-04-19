@@ -2684,24 +2684,25 @@ tomli-w = ">=1.0,<2.0"
 
 [[package]]
 name = "terok-sandbox"
-version = "0.0.77"
+version = "0.0.75"
 description = "Hardened Podman container runner with gate server and shield integration"
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = [
-    {file = "terok_sandbox-0.0.77-py3-none-any.whl", hash = "sha256:c47dbaf736e028aff6c3032f537b557896c5ef219ec5aaf1437bd35d7128e938"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 aiohttp = ">=3.9"
 cryptography = ">=46.0.7"
 platformdirs = ">=4.9.6"
-terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.6.20/terok_shield-0.6.20-py3-none-any.whl"}
+terok-shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.6.20/terok_shield-0.6.20-py3-none-any.whl"}
 
 [package.source]
-type = "url"
-url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.77/terok_sandbox-0.0.77-py3-none-any.whl"
+type = "git"
+url = "https://github.com/sliwowitz/terok-sandbox.git"
+reference = "feat/ssh-keys-in-vault"
+resolved_reference = "4a210a0bb12153187f9a8cce0f50727e2a67fd37"
 
 [[package]]
 name = "terok-shield"
@@ -3119,4 +3120,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "9cff528505864ec92bc46403dbc3fbaab7091599b5cf9014ae8a01f2b8e345f1"
+content-hash = "bf5a2950f7dc214e22fb56453d8eee95beae0ea898e02820aff4935600d5c028"
