@@ -64,6 +64,24 @@ class TestAgentRunner:
         reg = runner.roster
         assert "claude" in reg.agent_names
 
+    def test_mismatched_sandbox_and_runtime_rejected(self) -> None:
+        """Passing a sandbox and a runtime from different backends raises."""
+        from terok_sandbox import NullRuntime, PodmanRuntime, Sandbox
+
+        rt_a = PodmanRuntime()
+        rt_b = NullRuntime()
+        with pytest.raises(ValueError, match="same backend instance"):
+            AgentRunner(sandbox=Sandbox(runtime=rt_a), runtime=rt_b)
+
+    def test_matching_sandbox_and_runtime_accepted(self) -> None:
+        """Passing a sandbox and a runtime pointing at the same backend is fine."""
+        from terok_sandbox import NullRuntime, Sandbox
+
+        rt = NullRuntime()
+        runner = AgentRunner(sandbox=Sandbox(runtime=rt), runtime=rt)
+        assert runner.runtime is rt
+        assert runner.sandbox.runtime is rt
+
     # test_shared_mounts_from_roster, test_base_env_has_essentials,
     # test_base_env_opencode_vars moved to test_env_builder.py
 

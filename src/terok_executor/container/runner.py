@@ -63,6 +63,15 @@ class AgentRunner:
         base_image: str = "ubuntu:24.04",
         family: str | None = None,
     ) -> None:
+        if sandbox is not None and runtime is not None and sandbox.runtime is not runtime:
+            # Split backends would mean port reservations on one runtime
+            # get used by containers launched via a different runtime —
+            # a subtle class of bug (``run_web`` vs ``sandbox.run``) that
+            # is easier to rule out at construction time.
+            raise ValueError(
+                "AgentRunner: sandbox.runtime and runtime must be the same backend "
+                "instance; pass only one or ensure sandbox was constructed with runtime"
+            )
         self._base_image = base_image
         self._family = family
         self._sandbox: Sandbox | None = sandbox

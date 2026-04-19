@@ -2702,7 +2702,7 @@ terok-shield = {url = "https://github.com/terok-ai/terok-shield/releases/downloa
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
 reference = "feat/container-runtime-protocol"
-resolved_reference = "8dc6bbcd0932bec62a83627d94a20f6d543c93ac"
+resolved_reference = "a49480a6996771cb2c13f3333be078b284a6dff1"
 
 [[package]]
 name = "terok-shield"
