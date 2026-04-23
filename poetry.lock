@@ -1823,7 +1823,7 @@ version = "26.1"
 description = "Core utilities for Python packages"
 optional = false
 python-versions = ">=3.8"
-groups = ["docs", "test"]
+groups = ["main", "docs", "test"]
 files = [
     {file = "packaging-26.1-py3-none-any.whl", hash = "sha256:5d9c0669c6285e491e0ced2eee587eaf67b670d94a19e94e3984a481aba6802f"},
     {file = "packaging-26.1.tar.gz", hash = "sha256:f042152b681c4bfac5cae2742a55e103d27ab2ec0f3d88037136b6bfe7c9c5de"},
@@ -2776,18 +2776,19 @@ url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.6.3/tero
 
 [[package]]
 name = "terok-sandbox"
-version = "0.0.95"
+version = "0.0.96"
 description = "Hardened Podman container runner with gate server and shield integration"
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
 files = [
-    {file = "terok_sandbox-0.0.95-py3-none-any.whl", hash = "sha256:00a9dfd768165a816fafb7dc5e8be0c8033d1e78805a15955980f7dc194641a2"},
+    {file = "terok_sandbox-0.0.96-py3-none-any.whl", hash = "sha256:887f0a38d62512bbb568b0eca09c893bca2913897e14f37ec983e7438a94c599"},
 ]
 
 [package.dependencies]
 aiohttp = ">=3.9"
 cryptography = ">=46.0.7"
+packaging = ">=24"
 platformdirs = ">=4.9.6"
 pydantic = ">=2.9"
 terok_clearance = {url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.6.3/terok_clearance-0.6.3-py3-none-any.whl"}
@@ -2795,7 +2796,7 @@ terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/downloa
 
 [package.source]
 type = "url"
-url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.95/terok_sandbox-0.0.95-py3-none-any.whl"
+url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.96/terok_sandbox-0.0.96-py3-none-any.whl"
 
 [[package]]
 name = "terok-shield"
@@ -3213,4 +3214,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "834119615b4eec8b5e4174888d30ab067401f45162db3edcc0a8dc3480e13fe3"
+content-hash = "d8d02769acab98695f684c26cb457262311c8fabafd2df9c825a2d6a39acc70e"
