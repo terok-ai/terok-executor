@@ -491,7 +491,9 @@ class TestCodexOAuthMountWriter:
         assert tokens["access_token"] == PHANTOM_CREDENTIALS_MARKER
         assert tokens["refresh_token"] == PHANTOM_CREDENTIALS_MARKER
         assert data["OPENAI_API_KEY"] is None
-        assert data["last_refresh"].endswith("Z")
+        # last_refresh is pinned far in the future so the CLI's 8-day
+        # staleness check never fires an in-container refresh attempt.
+        assert data["last_refresh"] == "9999-01-01T00:00:00Z"
 
     def test_default_overwrites_stale_real_auth_json(self, tmp_path: Path) -> None:
         """expose_token=False replaces a prior real auth.json with the phantom."""

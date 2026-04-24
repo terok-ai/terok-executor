@@ -520,6 +520,19 @@ def _codex_oauth_mount_writer(
         )
 
 
+#: Static far-future timestamp for the phantom ``auth.json``'s
+#: ``last_refresh`` field.  Codex's CLI fires a client-side token
+#: refresh against the hardcoded ``auth.openai.com`` whenever
+#: ``now - last_refresh > 8 days`` (manager.rs:1743).  Those attempts
+#: would arrive at the upstream with the phantom refresh token and come
+#: back as ``refresh_token_invalidated``, prompting the user to re-login
+#: even though vault-side refresh keeps the real credential fresh.
+#: Pinning ``last_refresh`` to year 9999 keeps the check permanently
+#: satisfied — the same trick Claude's phantom file uses with its
+#: ``"expiresAt": null`` sentinel.
+_CODEX_PHANTOM_LAST_REFRESH = "9999-01-01T00:00:00Z"
+
+
 def _write_codex_phantom_auth_json(cred_data: dict, dest: Path) -> None:
     """Write a phantom ``auth.json`` preserving public id_token claims only.
 
@@ -528,14 +541,10 @@ def _write_codex_phantom_auth_json(cred_data: dict, dest: Path) -> None:
     decodes it to read workspace/plan claims but never verifies the
     signature, so the real id_token rides into the container unchanged.
     The access/refresh tokens are the bearer secrets; both are replaced
-    with the vault's phantom marker.
-
-    ``last_refresh`` is stamped at capture time so the CLI's 8-day
-    staleness check doesn't fire an in-container refresh attempt until
-    at least eight days after the user runs ``terok auth codex``.
+    with the vault's phantom marker — inference rides through the vault,
+    which substitutes the live access token.
     """
     import json
-    from datetime import UTC, datetime
 
     tokens: dict = {
         "id_token": cred_data.get("id_token", ""),
@@ -549,7 +558,7 @@ def _write_codex_phantom_auth_json(cred_data: dict, dest: Path) -> None:
     payload = {
         "OPENAI_API_KEY": None,
         "tokens": tokens,
-        "last_refresh": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "last_refresh": _CODEX_PHANTOM_LAST_REFRESH,
     }
     dest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
