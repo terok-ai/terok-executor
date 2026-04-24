@@ -75,7 +75,13 @@ def extract_claude_oauth(base_dir: Path) -> dict:
 
 
 def extract_codex_oauth(base_dir: Path) -> dict:
-    """Extract Codex (OpenAI) OAuth tokens from ``auth.json``."""
+    """Extract Codex (OpenAI) OAuth tokens from ``auth.json``.
+
+    Also preserves the ``id_token`` JWT and ``account_id`` when present —
+    the phantom auth.json the proxied tier writes into task containers
+    needs to carry the real id_token so Codex's plan-tier and workspace
+    UI keeps working without leaking the access/refresh tokens.
+    """
     cred_file = base_dir / "auth.json"
     data = _try_read_json(cred_file)
     if data is None:
@@ -86,11 +92,16 @@ def extract_codex_oauth(base_dir: Path) -> dict:
     if not access_token:
         raise ValueError("Codex credential file has no access_token")
 
-    return {
+    cred: dict = {
         "type": "oauth",
         "access_token": access_token,
         "refresh_token": tokens.get("refresh_token", ""),
     }
+    for optional in ("id_token", "account_id"):
+        value = tokens.get(optional)
+        if value:
+            cred[optional] = value
+    return cred
 
 
 def extract_api_key_env(base_dir: Path, filename: str = ".env", var_name: str = "") -> dict:

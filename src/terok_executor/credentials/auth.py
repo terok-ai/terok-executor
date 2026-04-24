@@ -481,19 +481,27 @@ def _codex_oauth_mount_writer(
 ) -> None:
     """Reconcile Codex's shared mount after an OAuth capture.
 
-    Only the expose path is wired in Phase 1: the real ``auth.json`` is
-    copied into the shared mount so the in-container Codex CLI reads the
-    live token.  The non-expose path wipes any prior copy — Phase 3 will
-    add a proxied variant that restores a phantom marker.
+    Two modes:
+
+    - **Exposed** (``expose_token=True``): copy the real ``auth.json``
+      verbatim so the in-container Codex reads the live OAuth token
+      (tier 3, unsafe — every task container can read it).
+    - **Default**: drop a phantom ``auth.json`` — the real ``id_token``
+      JWT (for plan-tier + workspace UI, public claims only) and
+      ``account_id`` survive, but ``access_token`` and ``refresh_token``
+      are replaced with :data:`PHANTOM_CREDENTIALS_MARKER`.  The vault
+      translates the marker back to the real token on inference
+      requests; the CLI itself never sees the live bearer.  This is the
+      fallback for tier 2 (proxied) and also a no-harm default for
+      tier 1 (vault stores creds but nothing wires the proxy yet).
     """
-    del cred_data
     dest_dir = mounts_base / "_codex-config"
     dest_file = dest_dir / "auth.json"
+    dest_dir.mkdir(parents=True, exist_ok=True)
     if expose_token:
         src = auth_dir / "auth.json"
         if not src.is_file():
             raise FileNotFoundError(f"No auth.json in {auth_dir}")
-        dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest_file)
         print("Real auth.json copied to shared Codex config mount.")
         print(
@@ -502,13 +510,48 @@ def _codex_oauth_mount_writer(
             "\n      The vault does NOT protect it."
         )
     else:
-        dest_file.unlink(missing_ok=True)
+        _write_codex_phantom_auth_json(cred_data, dest_file)
+        print("Phantom auth.json written to shared Codex config mount.")
         print(
-            "\nNote: Codex OAuth token was captured to the vault DB but is"
-            "\n      NOT reachable from task containers — no proxy route"
-            "\n      is wired yet.  Set agent.codex.expose_oauth_token to"
-            "\n      mount the real token (unsafe, experimental)."
+            "\nNote: Codex OAuth credential is shared across all task containers."
+            "\n      API calls are routed through the vault — the real"
+            "\n      access/refresh tokens stay on the host.  Enable"
+            "\n      agent.codex.allow_oauth to wire the proxy routing."
         )
+
+
+def _write_codex_phantom_auth_json(cred_data: dict, dest: Path) -> None:
+    """Write a phantom ``auth.json`` preserving public id_token claims only.
+
+    Codex's ``TokenData`` serde contract (codex-rs/login/src/token_data.rs)
+    requires ``id_token`` to be a parseable JWT string — the CLI base64-
+    decodes it to read workspace/plan claims but never verifies the
+    signature, so the real id_token rides into the container unchanged.
+    The access/refresh tokens are the bearer secrets; both are replaced
+    with the vault's phantom marker.
+
+    ``last_refresh`` is stamped at capture time so the CLI's 8-day
+    staleness check doesn't fire an in-container refresh attempt until
+    at least eight days after the user runs ``terok auth codex``.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    tokens: dict = {
+        "id_token": cred_data.get("id_token", ""),
+        "access_token": PHANTOM_CREDENTIALS_MARKER,
+        "refresh_token": PHANTOM_CREDENTIALS_MARKER,
+    }
+    account_id = cred_data.get("account_id")
+    if account_id:
+        tokens["account_id"] = account_id
+
+    payload = {
+        "OPENAI_API_KEY": None,
+        "tokens": tokens,
+        "last_refresh": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    dest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 #: Maps provider name → post-capture mount reconciler.  OAuth-capable

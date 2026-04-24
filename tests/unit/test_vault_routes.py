@@ -89,11 +89,13 @@ class TestVaultRoutesParsed:
         assert "token_url" in route.oauth_refresh
         assert "client_id" in route.oauth_refresh
 
-    def test_codex_has_no_oauth_refresh(self) -> None:
-        """Codex does not yet have oauth_refresh configured."""
+    def test_codex_has_oauth_refresh(self) -> None:
+        """Codex has an oauth_refresh block so vault can rotate tokens in the background."""
         route = get_roster().vault_routes.get("codex")
         assert route is not None
-        assert route.oauth_refresh is None
+        assert route.oauth_refresh is not None
+        assert route.oauth_refresh["token_url"] == "https://auth.openai.com/oauth/token"
+        assert route.oauth_refresh["client_id"] == "app_EMoamEEZ73f0CkXaXp7hrann"
 
 
 class TestGenerateRoutesJson:

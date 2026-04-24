@@ -160,6 +160,33 @@ class TestCodexOAuth:
         with pytest.raises(ValueError, match="no access_token"):
             extract_codex_oauth(tmp_path)
 
+    def test_preserves_id_token_and_account_id(self, tmp_path: Path) -> None:
+        """id_token JWT and account_id ride along when present."""
+        (tmp_path / "auth.json").write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": "sk-at",
+                        "refresh_token": "rt",
+                        "id_token": "a.b.c",
+                        "account_id": "org-42",
+                    }
+                }
+            )
+        )
+        result = extract_codex_oauth(tmp_path)
+        assert result["id_token"] == "a.b.c"
+        assert result["account_id"] == "org-42"
+
+    def test_omits_absent_optional_fields(self, tmp_path: Path) -> None:
+        """Missing id_token / account_id leave the keys out entirely."""
+        (tmp_path / "auth.json").write_text(
+            json.dumps({"tokens": {"access_token": "sk-at", "refresh_token": "rt"}})
+        )
+        result = extract_codex_oauth(tmp_path)
+        assert "id_token" not in result
+        assert "account_id" not in result
+
 
 class TestApiKeyEnv:
     """Verify dotenv-style API key extraction."""

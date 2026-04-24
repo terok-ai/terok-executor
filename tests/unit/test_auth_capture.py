@@ -406,10 +406,18 @@ class TestCaptureWritesCredentialsFile:
 
         assert not (mounts / "_claude-config" / ".credentials.json").exists()
 
-    def test_capture_codex_default_leaves_mount_empty(self, tmp_path: Path) -> None:
-        """Codex OAuth capture without expose wipes the shared mount copy."""
+    def test_capture_codex_default_writes_phantom(self, tmp_path: Path) -> None:
+        """Codex OAuth capture without expose writes a phantom auth.json."""
         (tmp_path / "auth.json").write_text(
-            json.dumps({"tokens": {"access_token": "sk-oai", "refresh_token": "rt"}})
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": "sk-oai",
+                        "refresh_token": "rt",
+                        "id_token": "id.token.jwt",
+                    }
+                }
+            )
         )
 
         db_path = tmp_path / "proxy" / "credentials.db"
@@ -418,8 +426,13 @@ class TestCaptureWritesCredentialsFile:
             mock_cfg_cls.return_value.db_path = db_path
             _capture_credentials("codex", tmp_path, "default", mounts_base=mounts)
 
-        assert not (mounts / "_claude-config").exists()
-        assert not (mounts / "_codex-config" / "auth.json").exists()
+        phantom = mounts / "_codex-config" / "auth.json"
+        assert phantom.is_file()
+        data = json.loads(phantom.read_text())
+        assert data["tokens"]["access_token"] == PHANTOM_CREDENTIALS_MARKER
+        assert data["tokens"]["refresh_token"] == PHANTOM_CREDENTIALS_MARKER
+        # The real id_token rides in — the CLI parses claims from it.
+        assert data["tokens"]["id_token"] == "id.token.jwt"
 
 
 class TestClaudeOAuthMountWriter:
@@ -464,22 +477,35 @@ class TestCodexOAuthMountWriter:
         assert dest.is_file()
         assert json.loads(dest.read_text()) == payload
 
-    def test_default_wipes_stale_auth_json(self, tmp_path: Path) -> None:
-        """expose_token=False removes any prior auth.json from the mount."""
+    def test_default_writes_phantom_preserving_id_token(self, tmp_path: Path) -> None:
+        """expose_token=False writes a phantom auth.json with real id_token claims."""
+        mounts = tmp_path / "mounts"
+        cred = {"id_token": "real.jwt.string", "account_id": "org-42"}
+
+        _codex_oauth_mount_writer(tmp_path, mounts, cred, expose_token=False)
+
+        data = json.loads((mounts / "_codex-config" / "auth.json").read_text())
+        tokens = data["tokens"]
+        assert tokens["id_token"] == "real.jwt.string"
+        assert tokens["account_id"] == "org-42"
+        assert tokens["access_token"] == PHANTOM_CREDENTIALS_MARKER
+        assert tokens["refresh_token"] == PHANTOM_CREDENTIALS_MARKER
+        assert data["OPENAI_API_KEY"] is None
+        assert data["last_refresh"].endswith("Z")
+
+    def test_default_overwrites_stale_real_auth_json(self, tmp_path: Path) -> None:
+        """expose_token=False replaces a prior real auth.json with the phantom."""
         mounts = tmp_path / "mounts"
         codex_dir = mounts / "_codex-config"
         codex_dir.mkdir(parents=True)
-        stale = codex_dir / "auth.json"
-        stale.write_text("stale")
+        (codex_dir / "auth.json").write_text(
+            json.dumps({"tokens": {"access_token": "leaked-real"}})
+        )
 
         _codex_oauth_mount_writer(tmp_path, mounts, {}, expose_token=False)
 
-        assert not stale.exists()
-
-    def test_default_no_mount_dir_is_safe(self, tmp_path: Path) -> None:
-        """expose_token=False is a no-op when the mount dir is absent."""
-        # Must not raise even when the target file was never created.
-        _codex_oauth_mount_writer(tmp_path, tmp_path / "mounts", {}, expose_token=False)
+        data = json.loads((codex_dir / "auth.json").read_text())
+        assert data["tokens"]["access_token"] == PHANTOM_CREDENTIALS_MARKER
 
     def test_expose_raises_when_file_missing(self, tmp_path: Path) -> None:
         """Raises FileNotFoundError when exposed and no auth.json."""
