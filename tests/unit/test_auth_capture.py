@@ -13,7 +13,8 @@ from terok_executor.credentials.auth import (
     PHANTOM_CREDENTIALS_MARKER,
     _apply_post_capture_state,
     _capture_credentials,
-    _copy_real_credentials,
+    _claude_oauth_mount_writer,
+    _codex_oauth_mount_writer,
     _write_claude_credentials_file,
     store_api_key,
 )
@@ -405,10 +406,18 @@ class TestCaptureWritesCredentialsFile:
 
         assert not (mounts / "_claude-config" / ".credentials.json").exists()
 
-    def test_capture_non_claude_skips_credentials_file(self, tmp_path: Path) -> None:
-        """Non-Claude providers don't write .credentials.json even with OAuth."""
+    def test_capture_codex_default_writes_phantom(self, tmp_path: Path) -> None:
+        """Codex OAuth capture without expose writes a phantom auth.json."""
         (tmp_path / "auth.json").write_text(
-            json.dumps({"tokens": {"access_token": "sk-oai", "refresh_token": "rt"}})
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": "sk-oai",
+                        "refresh_token": "rt",
+                        "id_token": "id.token.jwt",
+                    }
+                }
+            )
         )
 
         db_path = tmp_path / "proxy" / "credentials.db"
@@ -417,32 +426,95 @@ class TestCaptureWritesCredentialsFile:
             mock_cfg_cls.return_value.db_path = db_path
             _capture_credentials("codex", tmp_path, "default", mounts_base=mounts)
 
-        assert not (mounts / "_claude-config").exists()
+        phantom = mounts / "_codex-config" / "auth.json"
+        assert phantom.is_file()
+        data = json.loads(phantom.read_text())
+        assert data["tokens"]["access_token"] == PHANTOM_CREDENTIALS_MARKER
+        assert data["tokens"]["refresh_token"] == PHANTOM_CREDENTIALS_MARKER
+        # The real id_token rides in — the CLI parses claims from it.
+        assert data["tokens"]["id_token"] == "id.token.jwt"
 
 
-class TestCopyRealCredentials:
-    """Verify _copy_real_credentials preserves the real token file."""
+class TestClaudeOAuthMountWriter:
+    """Verify the Claude mount reconciler preserves or phantomises creds."""
 
-    def test_copies_real_file(self, tmp_path: Path) -> None:
-        """Real .credentials.json is copied verbatim to the shared mount."""
+    def test_expose_copies_real_file(self, tmp_path: Path) -> None:
+        """Real .credentials.json is copied verbatim when exposed."""
         auth_dir = tmp_path / "auth"
         auth_dir.mkdir()
         real_creds = {"claudeAiOauth": {"accessToken": "real-token-abc"}}
         (auth_dir / ".credentials.json").write_text(json.dumps(real_creds))
 
         mounts = tmp_path / "mounts"
-        _copy_real_credentials(auth_dir, mounts)
+        _claude_oauth_mount_writer(auth_dir, mounts, real_creds, expose_token=True)
 
         dest = mounts / "_claude-config" / ".credentials.json"
         assert dest.is_file()
         assert json.loads(dest.read_text()) == real_creds
 
-    def test_raises_when_file_missing(self, tmp_path: Path) -> None:
-        """Raises FileNotFoundError when auth dir has no .credentials.json."""
+    def test_expose_raises_when_file_missing(self, tmp_path: Path) -> None:
+        """Raises FileNotFoundError when exposed and no .credentials.json."""
         import pytest
 
         with pytest.raises(FileNotFoundError):
-            _copy_real_credentials(tmp_path, tmp_path / "mounts")
+            _claude_oauth_mount_writer(tmp_path, tmp_path / "mounts", {}, expose_token=True)
+
+
+class TestCodexOAuthMountWriter:
+    """Verify the Codex mount reconciler copies-or-wipes auth.json."""
+
+    def test_expose_copies_real_auth_json(self, tmp_path: Path) -> None:
+        """expose_token=True copies auth.json into _codex-config."""
+        auth_dir = tmp_path / "auth"
+        auth_dir.mkdir()
+        payload = {"tokens": {"access_token": "sk-oai", "refresh_token": "rt"}}
+        (auth_dir / "auth.json").write_text(json.dumps(payload))
+
+        mounts = tmp_path / "mounts"
+        _codex_oauth_mount_writer(auth_dir, mounts, payload, expose_token=True)
+
+        dest = mounts / "_codex-config" / "auth.json"
+        assert dest.is_file()
+        assert json.loads(dest.read_text()) == payload
+
+    def test_default_writes_phantom_preserving_id_token(self, tmp_path: Path) -> None:
+        """expose_token=False writes a phantom auth.json with real id_token claims."""
+        mounts = tmp_path / "mounts"
+        cred = {"id_token": "real.jwt.string", "account_id": "org-42"}
+
+        _codex_oauth_mount_writer(tmp_path, mounts, cred, expose_token=False)
+
+        data = json.loads((mounts / "_codex-config" / "auth.json").read_text())
+        tokens = data["tokens"]
+        assert tokens["id_token"] == "real.jwt.string"
+        assert tokens["account_id"] == "org-42"
+        assert tokens["access_token"] == PHANTOM_CREDENTIALS_MARKER
+        assert tokens["refresh_token"] == PHANTOM_CREDENTIALS_MARKER
+        assert data["OPENAI_API_KEY"] is None
+        # last_refresh is pinned far in the future so the CLI's 8-day
+        # staleness check never fires an in-container refresh attempt.
+        assert data["last_refresh"] == "9999-01-01T00:00:00Z"
+
+    def test_default_overwrites_stale_real_auth_json(self, tmp_path: Path) -> None:
+        """expose_token=False replaces a prior real auth.json with the phantom."""
+        mounts = tmp_path / "mounts"
+        codex_dir = mounts / "_codex-config"
+        codex_dir.mkdir(parents=True)
+        (codex_dir / "auth.json").write_text(
+            json.dumps({"tokens": {"access_token": "leaked-real"}})
+        )
+
+        _codex_oauth_mount_writer(tmp_path, mounts, {}, expose_token=False)
+
+        data = json.loads((codex_dir / "auth.json").read_text())
+        assert data["tokens"]["access_token"] == PHANTOM_CREDENTIALS_MARKER
+
+    def test_expose_raises_when_file_missing(self, tmp_path: Path) -> None:
+        """Raises FileNotFoundError when exposed and no auth.json."""
+        import pytest
+
+        with pytest.raises(FileNotFoundError):
+            _codex_oauth_mount_writer(tmp_path, tmp_path / "mounts", {}, expose_token=True)
 
 
 class TestCaptureWithExposeToken:

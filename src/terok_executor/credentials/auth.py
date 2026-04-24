@@ -22,6 +22,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -384,8 +385,12 @@ def _capture_credentials(
                 print(f"  {f}")
         return
 
-    is_claude_oauth = provider_name == "claude" and cred_data.get("type") == "oauth"
-    exposed_directly = expose_token and is_claude_oauth
+    is_oauth = cred_data.get("type") == "oauth"
+    post_capture = _OAUTH_MOUNT_WRITERS.get(provider_name) if is_oauth else None
+    # Tier 3 bypass: the host-side vault never refreshes the token, so the
+    # container must own its lifecycle.  Storing in the DB would let the
+    # background refresher rotate a token nobody brokers back to the mount.
+    exposed_directly = expose_token and post_capture is not None
 
     if exposed_directly:
         print(f"\nCredentials for {provider_name} bypassing vault DB (exposed directly)")
@@ -412,33 +417,17 @@ def _capture_credentials(
             )
             return
 
-    # Write .credentials.json — real token (tier 3) or phantom marker (default)
-    if is_claude_oauth:
+    # Reconcile the shared mount with the captured credential.  Provider-specific
+    # writers drop a phantom marker (proxied mode) or copy the real file (exposed).
+    if post_capture is not None:
         if mounts_base is None:
             from terok_executor.paths import mounts_dir
 
             mounts_base = mounts_dir()
         try:
-            if expose_token:
-                _copy_real_credentials(auth_dir, mounts_base)
-                print("Real .credentials.json copied to shared Claude config mount.")
-            else:
-                _write_claude_credentials_file(cred_data, mounts_base)
-                print("Subscription metadata written to shared Claude config mount.")
+            post_capture(auth_dir, mounts_base, cred_data, expose_token)
         except Exception as exc:  # noqa: BLE001
-            print(f"Warning: could not write .credentials.json: {exc}")
-        if expose_token:
-            print(
-                "\nNote: Claude OAuth token is EXPOSED in the shared mount."
-                "\n      Every task container can read the real token."
-                "\n      The vault does NOT protect it."
-            )
-        else:
-            print(
-                "\nNote: Claude OAuth credential is shared across all task containers."
-                "\n      API calls are routed through the vault — the real"
-                "\n      token stays on the host."
-            )
+            print(f"Warning: could not reconcile {provider_name} mount: {exc}")
 
     # Apply declarative post-capture state from roster YAML
     if auth_provider and auth_provider.post_capture_state:
@@ -455,18 +444,132 @@ def _capture_credentials(
             )
 
 
-def _copy_real_credentials(auth_dir: Path, mounts_base: Path) -> None:
-    """Copy the real ``.credentials.json`` from the auth dir to the shared mount.
+def _claude_oauth_mount_writer(
+    auth_dir: Path, mounts_base: Path, cred_data: dict, expose_token: bool
+) -> None:
+    """Reconcile Claude's shared mount after an OAuth capture.
 
-    Used by tier 3 (``expose_oauth_token``) — the container needs the actual
-    OAuth token for direct API calls to ``api.anthropic.com``.
+    Default path writes a phantom ``.credentials.json`` with subscription
+    metadata only; tier 3 copies the real credential file so Claude Code
+    can reach ``api.anthropic.com`` directly (its hardcoded OAuth host).
     """
-    src = auth_dir / ".credentials.json"
-    if not src.is_file():
-        raise FileNotFoundError(f"No .credentials.json in {auth_dir}")
-    dest_dir = mounts_base / "_claude-config"
+    if expose_token:
+        src = auth_dir / ".credentials.json"
+        if not src.is_file():
+            raise FileNotFoundError(f"No .credentials.json in {auth_dir}")
+        dest_dir = mounts_base / "_claude-config"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest_dir / ".credentials.json")
+        print("Real .credentials.json copied to shared Claude config mount.")
+        print(
+            "\nNote: Claude OAuth token is EXPOSED in the shared mount."
+            "\n      Every task container can read the real token."
+            "\n      The vault does NOT protect it."
+        )
+    else:
+        _write_claude_credentials_file(cred_data, mounts_base)
+        print("Subscription metadata written to shared Claude config mount.")
+        print(
+            "\nNote: Claude OAuth credential is shared across all task containers."
+            "\n      API calls are routed through the vault — the real"
+            "\n      token stays on the host."
+        )
+
+
+def _codex_oauth_mount_writer(
+    auth_dir: Path, mounts_base: Path, cred_data: dict, expose_token: bool
+) -> None:
+    """Reconcile Codex's shared mount after an OAuth capture.
+
+    Two modes:
+
+    - **Exposed** (``expose_token=True``): copy the real ``auth.json``
+      verbatim so the in-container Codex reads the live OAuth token
+      (tier 3, unsafe — every task container can read it).
+    - **Default**: drop a phantom ``auth.json`` — the real ``id_token``
+      JWT (for plan-tier + workspace UI, public claims only) and
+      ``account_id`` survive, but ``access_token`` and ``refresh_token``
+      are replaced with :data:`PHANTOM_CREDENTIALS_MARKER`.  The vault
+      translates the marker back to the real token on inference
+      requests; the CLI itself never sees the live bearer.  This is the
+      fallback for tier 2 (proxied) and also a no-harm default for
+      tier 1 (vault stores creds but nothing wires the proxy yet).
+    """
+    dest_dir = mounts_base / "_codex-config"
+    dest_file = dest_dir / "auth.json"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest_dir / ".credentials.json")
+    if expose_token:
+        src = auth_dir / "auth.json"
+        if not src.is_file():
+            raise FileNotFoundError(f"No auth.json in {auth_dir}")
+        shutil.copy2(src, dest_file)
+        print("Real auth.json copied to shared Codex config mount.")
+        print(
+            "\nNote: Codex OAuth token is EXPOSED in the shared mount."
+            "\n      Every task container can read the real token."
+            "\n      The vault does NOT protect it."
+        )
+    else:
+        _write_codex_phantom_auth_json(cred_data, dest_file)
+        print("Phantom auth.json written to shared Codex config mount.")
+        print(
+            "\nNote: Codex OAuth credential is shared across all task containers."
+            "\n      API calls are routed through the vault — the real"
+            "\n      access/refresh tokens stay on the host.  Enable"
+            "\n      agent.codex.allow_oauth to wire the proxy routing."
+        )
+
+
+#: Static far-future timestamp for the phantom ``auth.json``'s
+#: ``last_refresh`` field.  Codex's CLI fires a client-side token
+#: refresh against the hardcoded ``auth.openai.com`` whenever
+#: ``now - last_refresh > 8 days`` (manager.rs:1743).  Those attempts
+#: would arrive at the upstream with the phantom refresh token and come
+#: back as ``refresh_token_invalidated``, prompting the user to re-login
+#: even though vault-side refresh keeps the real credential fresh.
+#: Pinning ``last_refresh`` to year 9999 keeps the check permanently
+#: satisfied — the same trick Claude's phantom file uses with its
+#: ``"expiresAt": null`` sentinel.
+_CODEX_PHANTOM_LAST_REFRESH = "9999-01-01T00:00:00Z"
+
+
+def _write_codex_phantom_auth_json(cred_data: dict, dest: Path) -> None:
+    """Write a phantom ``auth.json`` preserving public id_token claims only.
+
+    Codex's ``TokenData`` serde contract (codex-rs/login/src/token_data.rs)
+    requires ``id_token`` to be a parseable JWT string — the CLI base64-
+    decodes it to read workspace/plan claims but never verifies the
+    signature, so the real id_token rides into the container unchanged.
+    The access/refresh tokens are the bearer secrets; both are replaced
+    with the vault's phantom marker — inference rides through the vault,
+    which substitutes the live access token.
+    """
+    import json
+
+    tokens: dict = {
+        "id_token": cred_data.get("id_token", ""),
+        "access_token": PHANTOM_CREDENTIALS_MARKER,
+        "refresh_token": PHANTOM_CREDENTIALS_MARKER,
+    }
+    account_id = cred_data.get("account_id")
+    if account_id:
+        tokens["account_id"] = account_id
+
+    payload = {
+        "OPENAI_API_KEY": None,
+        "tokens": tokens,
+        "last_refresh": _CODEX_PHANTOM_LAST_REFRESH,
+    }
+    dest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+#: Maps provider name → post-capture mount reconciler.  OAuth-capable
+#: providers register here to share the expose/proxy dispatch in
+#: :func:`_capture_credentials`.
+_OAUTH_MOUNT_WRITERS: dict[str, Callable[[Path, Path, dict, bool], None]] = {
+    "claude": _claude_oauth_mount_writer,
+    "codex": _codex_oauth_mount_writer,
+}
 
 
 def _write_claude_credentials_file(cred_data: dict, mounts_base: Path) -> None:
