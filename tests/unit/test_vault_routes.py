@@ -287,7 +287,7 @@ class TestVaultCommandHandlers:
         assert "running" in out
         assert "claude" in out
 
-    @patch("terok_sandbox.install_vault_systemd")
+    @patch("terok_sandbox.VaultManager.install_systemd_units")
     @patch("terok_executor.roster.loader.ensure_vault_routes")
     @patch("terok_sandbox.is_vault_systemd_available", return_value=True)
     def test_install_generates_routes_and_installs(self, _sd, _routes, _install, capsys) -> None:
@@ -307,7 +307,7 @@ class TestVaultCommandHandlers:
         with pytest.raises(SystemExit):
             _handle_install()
 
-    @patch("terok_sandbox.uninstall_vault_systemd")
+    @patch("terok_sandbox.VaultManager.uninstall_systemd_units")
     @patch("terok_sandbox.is_vault_systemd_available", return_value=True)
     def test_uninstall_removes_units(self, _sd, _uninstall, capsys) -> None:
         """uninstall removes systemd units."""
