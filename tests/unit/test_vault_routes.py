@@ -229,7 +229,7 @@ class TestVaultCommandHandlers:
     """Verify vault CLI command handlers."""
 
     @patch("terok_sandbox.start_vault")
-    @patch("terok_executor.credentials.vault_commands._ensure_routes")
+    @patch("terok_executor.roster.loader.ensure_vault_routes")
     @patch("terok_sandbox.is_vault_running", return_value=False)
     def test_start_generates_routes_and_starts(self, _running, _routes, _start, capsys) -> None:
         """start generates routes then starts the daemon."""
@@ -288,7 +288,7 @@ class TestVaultCommandHandlers:
         assert "claude" in out
 
     @patch("terok_sandbox.install_vault_systemd")
-    @patch("terok_executor.credentials.vault_commands._ensure_routes")
+    @patch("terok_executor.roster.loader.ensure_vault_routes")
     @patch("terok_sandbox.is_vault_systemd_available", return_value=True)
     def test_install_generates_routes_and_installs(self, _sd, _routes, _install, capsys) -> None:
         """install generates routes then installs systemd units."""
@@ -326,7 +326,7 @@ class TestVaultCommandHandlers:
             _handle_uninstall()
 
     @patch(
-        "terok_executor.credentials.vault_commands._ensure_routes",
+        "terok_executor.roster.loader.ensure_vault_routes",
         return_value=Path("/tmp/routes.json"),
     )
     def test_routes_prints_path(self, _routes, capsys) -> None:
