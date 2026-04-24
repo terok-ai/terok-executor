@@ -171,7 +171,7 @@ def _handle_status(*, cfg: SandboxConfig | None = None) -> None:
 
 def _handle_install(*, cfg: SandboxConfig | None = None) -> None:
     """Generate routes and install systemd socket activation."""
-    from terok_sandbox import install_vault_systemd, is_vault_systemd_available
+    from terok_sandbox import VaultManager, is_vault_systemd_available
 
     from terok_executor.roster.loader import ensure_vault_routes
 
@@ -182,18 +182,18 @@ def _handle_install(*, cfg: SandboxConfig | None = None) -> None:
         )
         sys.exit(1)
     ensure_vault_routes(cfg=cfg)
-    install_vault_systemd(cfg=cfg)
+    VaultManager(cfg).install_systemd_units()
     print("Vault installed via systemd socket activation.")
 
 
 def _handle_uninstall(*, cfg: SandboxConfig | None = None) -> None:
     """Remove vault systemd units."""
-    from terok_sandbox import is_vault_systemd_available, uninstall_vault_systemd
+    from terok_sandbox import VaultManager, is_vault_systemd_available
 
     if not is_vault_systemd_available():
         print("Error: systemd user services are not available. Nothing to uninstall.")
         sys.exit(1)
-    uninstall_vault_systemd(cfg=cfg)
+    VaultManager(cfg).uninstall_systemd_units()
     print("Vault systemd units removed.")
 
 
