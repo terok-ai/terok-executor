@@ -20,21 +20,16 @@ if TYPE_CHECKING:
     from terok_sandbox import SandboxConfig
 
 
-def _ensure_routes(cfg: SandboxConfig | None = None) -> Path:
-    """Generate routes.json from the YAML agent roster."""
-    from terok_executor.roster.loader import ensure_vault_routes
-
-    return ensure_vault_routes(cfg=cfg)
-
-
 def _handle_start(*, cfg: SandboxConfig | None = None) -> None:
     """Generate routes and start the vault daemon."""
     from terok_sandbox import is_vault_running, start_vault
 
+    from terok_executor.roster.loader import ensure_vault_routes
+
     if is_vault_running(cfg=cfg):
         print("Vault is already running.")
         sys.exit(1)
-    _ensure_routes(cfg=cfg)
+    ensure_vault_routes(cfg=cfg)
     start_vault(cfg=cfg)
     print("Vault started.")
 
@@ -178,13 +173,15 @@ def _handle_install(*, cfg: SandboxConfig | None = None) -> None:
     """Generate routes and install systemd socket activation."""
     from terok_sandbox import install_vault_systemd, is_vault_systemd_available
 
+    from terok_executor.roster.loader import ensure_vault_routes
+
     if not is_vault_systemd_available():
         print(
             "Error: systemd user services are not available on this host.\n"
             "Use 'start' to run the vault without systemd."
         )
         sys.exit(1)
-    _ensure_routes(cfg=cfg)
+    ensure_vault_routes(cfg=cfg)
     install_vault_systemd(cfg=cfg)
     print("Vault installed via systemd socket activation.")
 
@@ -202,7 +199,9 @@ def _handle_uninstall(*, cfg: SandboxConfig | None = None) -> None:
 
 def _handle_routes(*, cfg: SandboxConfig | None = None) -> None:
     """Regenerate routes.json from the YAML agent roster."""
-    path = _ensure_routes(cfg=cfg)
+    from terok_executor.roster.loader import ensure_vault_routes
+
+    path = ensure_vault_routes(cfg=cfg)
     if path:
         print(f"Routes written to {path}")
 
