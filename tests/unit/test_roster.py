@@ -53,6 +53,7 @@ class TestLoadBundledAgents:
             "blablador",
             "kisski",
             "opencode",
+            "openrouter",
             "sonar",
             "toad",
             "vibe",
@@ -362,7 +363,16 @@ class TestLoadRegistry:
 
     def test_loads_all_agents(self) -> None:
         reg = load_roster()
-        expected_agents = {"claude", "codex", "copilot", "vibe", "blablador", "kisski", "opencode"}
+        expected_agents = {
+            "claude",
+            "codex",
+            "copilot",
+            "vibe",
+            "blablador",
+            "kisski",
+            "opencode",
+            "openrouter",
+        }
         assert set(reg.agent_names) == expected_agents
 
     def test_all_names_includes_tools(self) -> None:

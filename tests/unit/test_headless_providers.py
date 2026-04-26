@@ -51,9 +51,18 @@ def _all_wrappers(*, has_agents: bool = False) -> str:
 class TestAgentProviderRegistry:
     """Tests for the AGENT_PROVIDERS registry."""
 
-    def test_all_seven_providers_exist(self) -> None:
-        """Registry contains exactly the seven expected providers."""
-        expected = {"claude", "codex", "copilot", "vibe", "blablador", "opencode", "kisski"}
+    def test_all_eight_providers_exist(self) -> None:
+        """Registry contains exactly the eight expected providers."""
+        expected = {
+            "claude",
+            "codex",
+            "copilot",
+            "vibe",
+            "blablador",
+            "opencode",
+            "kisski",
+            "openrouter",
+        }
         assert set(AGENT_PROVIDERS.keys()) == expected
 
     def test_provider_names_tuple(self) -> None:
