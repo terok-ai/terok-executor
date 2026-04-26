@@ -3,56 +3,56 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![REUSE status](https://api.reuse.software/badge/github.com/terok-ai/terok-executor)](https://api.reuse.software/info/github.com/terok-ai/terok-executor)
 
-Per-task agent runner for hardened Podman containers.
+One command to run an AI coding agent inside a hardened, rootless
+Podman container.
 
-`terok-executor` builds container images, launches a single AI
-coding agent inside a rootless container with default-deny egress
-and vault-isolated credentials, and exposes the same lifecycle as
-both a standalone CLI and a Python library.  It is the layer that
-turns *"give me an agent on this repo"* into a running, bounded
-container.
+`terok-executor` builds the container, launches the agent against
+the directory you point it at, and keeps real credentials on the
+host.  Use it on its own as a CLI, or import its `AgentRunner` from
+Python when you want library-grade control.
 
 <p align="center">
   <img src="docs/img/architecture.svg" alt="terok ecosystem — terok-executor sits between project orchestration and the hardened runtime">
 </p>
 
-## What it provides
+## Quick start
 
-- **`AgentRunner` Python API** — one object, four launch methods:
-  `run_headless`, `run_interactive`, `run_web`, `run_tool`.  Same
-  hardening guarantees regardless of mode.
-- **Image factory** — builds a layered image stack (base distro,
-  agent CLIs, optional sidecar tools) on top of any allowed base
-  image; cached and reused.
-- **Auth flows** — OAuth and API-key flows for every supported
-  provider.  Real credentials stay on the host; containers see
-  phantom tokens that the vault resolves per request.
-- **Roster + provider registry** — agents are declared in YAML
-  (bundled defaults plus user overlays under
-  `~/.config/terok/agents/`); add a new endpoint without touching
-  Python.
-- **Sidecar tools** — non-agent helpers (CodeRabbit, SonarCloud) run
-  in their own image with the same vault model.
-- **Doctor + setup** — `terok-executor setup` brings up the
-  underlying sandbox services and image cache; `terok-executor doctor`
-  reports drift.
+```bash
+pip install terok-executor                        # Python 3.12+, rootless Podman, nft
+terok-executor run claude . -p "Fix the failing test in test_auth.py"
+```
 
-## Where it sits in the stack
+The first `run` interactively offers any missing prerequisites — sandbox
+services, container images, agent credentials — one `[Y/n]` prompt
+at a time.  Mandatory items (services, images) block the launch if
+declined; optional ones (SSH key, auth) print the consequence and
+proceed.
 
-terok-executor is the per-task layer.  Above it, multi-task
-orchestration ([terok](https://github.com/terok-ai/terok)) composes
-many concurrent runs across many projects.  Below it, terok-executor
-delegates the entire host-side security boundary
-([terok-sandbox](https://github.com/terok-ai/terok-sandbox)): the
-vault, the git gate, the egress firewall hooks, the systemd service
-lifecycle.  The split keeps the executor focused on what an agent
-needs at runtime, and the sandbox focused on what the host needs to
-trust the container.
+For non-interactive environments, do the bootstrap explicitly first:
 
-You can use terok-executor entirely on its own — point it at a
-directory, give it a prompt, get a run.  When you reach for project
-config, presets, or multiple parallel agents, that's the moment to
-add terok on top.
+```bash
+terok-executor setup                              # install sandbox services + build base images
+terok-executor auth claude                        # authenticate (OAuth or API key)
+terok-executor run claude . -p "..."              # idempotent — safe to re-run after upgrades
+```
+
+## Use as a library
+
+```python
+from terok_executor import AgentRunner
+
+runner = AgentRunner()
+runner.run_headless(
+    agent="claude",
+    repo=".",
+    prompt="Fix the failing test in test_auth.py",
+    max_turns=25,
+)
+```
+
+`AgentRunner` exposes four launch methods — `run_headless`,
+`run_interactive`, `run_web`, `run_tool` — all with the same
+hardening guarantees.
 
 ## Supported agents
 
@@ -68,62 +68,18 @@ add terok on top.
 | CodeRabbit | API key | CodeRabbit (sidecar tool) |
 | SonarCloud | API key | SonarCloud scanner (sidecar tool) |
 
-## Quick start
+`terok-executor agents` lists the live roster (add `--all` to
+include the tool entries).
 
-Two paths converge on the same ready state.  Pick whichever fits.
+## Where it sits in the stack
 
-### Explicit bootstrap (recommended for first install)
-
-```bash
-pip install terok-executor        # requires Python 3.12+, Podman (rootless)
-
-terok-executor setup              # install shield hooks + vault + gate, build images
-terok-executor auth claude        # authenticate (OAuth or API key)
-
-terok-executor run claude . -p "Fix the failing test in test_auth.py"
-```
-
-`terok-executor setup` is idempotent — safe to re-run after upgrades.
-The image build step is minutes-long only on first install; subsequent
-runs reuse the cached layers.
-
-### Lazy first run
-
-```bash
-pip install terok-executor
-terok-executor run claude .       # prompts for each missing prerequisite
-```
-
-Missing pieces are offered one at a time with `[Y/n]` prompts:
-sandbox services, container images, gate SSH key, and agent
-credentials.  Mandatory items (services, images) block the launch if
-declined; optional ones (SSH key, auth) print the consequence and
-proceed.
-
-Non-interactive environments (CI, scripts) should either run
-`terok-executor setup` first or pass `--yes` / `--no-preflight` on
-the `run` invocation.
-
-### Use as a library
-
-```python
-from terok_executor import AgentRunner
-
-runner = AgentRunner()
-runner.run_headless(
-    agent="claude",
-    repo=".",
-    prompt="Fix the failing test in test_auth.py",
-    max_turns=25,
-)
-```
-
-### Uninstall
-
-```bash
-terok-executor uninstall              # removes services + image cache
-terok-executor uninstall --keep-images  # leave the image cache for fast re-install
-```
+terok-executor is the per-task layer.  Above it,
+[terok](https://github.com/terok-ai/terok) composes many concurrent
+runs across many projects.  Below it, terok-executor delegates the
+host-side security boundary
+([terok-sandbox](https://github.com/terok-ai/terok-sandbox)): the
+credential vault, the git gate, the egress firewall hooks, the
+systemd service lifecycle.
 
 ## Commands
 
@@ -132,11 +88,11 @@ terok-executor uninstall --keep-images  # leave the image cache for fast re-inst
 | `run` | Launch an agent (headless, interactive, or web) |
 | `setup` | Bootstrap sandbox services + container images |
 | `uninstall` | Remove sandbox services + container images |
-| `auth` | Authenticate a provider (OAuth, API key, or `--api-key`) |
-| `agents` | List registered agents (`--all` includes tool entries) |
-| `build` | Build base + agent container images explicitly |
+| `auth` | Authenticate a provider |
+| `agents` | List the agent roster |
+| `build` | Build base + agent images explicitly |
 | `run-tool` | Run a sidecar tool (CodeRabbit, SonarCloud) |
-| `list` | List running terok-executor containers |
+| `list` | List running containers |
 | `stop` | Stop a running container |
 | `vault` | Vault management (start, stop, status, install, routes) |
 
@@ -150,10 +106,7 @@ terok-executor uninstall --keep-images  # leave the image cache for fast re-inst
 
 ## Development
 
-```bash
-poetry install --with dev,test,docs
-make check    # lint + test + tach + security + docstrings + deadcode + reuse
-```
+See the [Developer Guide](https://terok-ai.github.io/terok-executor/developer/).
 
 ## License
 
