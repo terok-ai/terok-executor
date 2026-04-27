@@ -9,10 +9,10 @@ lifecycle of one AI coding agent at a time.  Designed for standalone use
 
 The public surface is ``__all__`` below.  Key entry points:
 
-- :class:`AgentRunner` — launch agents in containers
-- :func:`authenticate` / :func:`store_api_key` — credential flows
-- :func:`build_base_images` — image construction
-- :func:`get_roster` — YAML agent registry
+- [`AgentRunner`][terok_executor.AgentRunner] — launch agents in containers
+- [`authenticate`][terok_executor.authenticate] / [`store_api_key`][terok_executor.store_api_key] — credential flows
+- [`build_base_images`][terok_executor.build_base_images] — image construction
+- [`get_roster`][terok_executor.get_roster] — YAML agent registry
 """
 
 __version__: str = "0.0.0"  # placeholder; replaced at build time
