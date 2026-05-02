@@ -33,7 +33,7 @@ from terok_sandbox import Sharing, VolumeSpec
 from terok_executor._util import detect_host_timezone
 
 _CONTAINER_RUNTIME_DIR = "/run/terok"
-"""Container-side mount point — must match [`terok_sandbox.CONTAINER_RUNTIME_DIR`][terok_sandbox.CONTAINER_RUNTIME_DIR]."""
+"""Container-side mount point — must match `terok_sandbox.CONTAINER_RUNTIME_DIR`."""
 
 CONTAINER_PROTOCOL = 1
 """Version of the host↔container env/script contract.

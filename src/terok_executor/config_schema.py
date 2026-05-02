@@ -6,7 +6,7 @@
 terok-executor owns one top-level section in the shared config:
 ``image:`` (base image, agent roster, Dockerfile snippets).  This
 module defines that section's strict schema and composes it with
-sandbox's [`SandboxConfigView`][terok_sandbox.config_schema.SandboxConfigView].
+sandbox's `SandboxConfigView`.
 
 Standalone executor consumers (``terok-executor run``) validate the
 file against [`ExecutorConfigView`][terok_executor.config_schema.ExecutorConfigView].  Sandbox-owned and
@@ -70,7 +70,7 @@ class ExecutorConfigView(SandboxConfigView):
     """The slice of ``config.yml`` executor owns + sandbox owns (transitively).
 
     Inherits all eight sandbox-owned sections from
-    [`SandboxConfigView`][terok_sandbox.config_schema.SandboxConfigView] and adds
+    `SandboxConfigView` and adds
     the executor-owned ``image:`` section.  ``extra="allow"`` keeps the
     view tolerant of foreign top-level keys (terok's ``tui:`` /
     ``logs:`` / ``tasks:`` / ``git:`` / ``hooks:``) — standalone

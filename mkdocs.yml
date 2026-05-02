@@ -40,11 +40,15 @@ plugins:
       handlers:
         python:
           inventories:
+            # Cross-package autorefs land here only for sibling packages
+            # whose published GitHub Pages site exposes ``objects.inv``.
+            # ``terok-sandbox`` and ``terok-clearance`` aren't currently
+            # publishing one (404 against ``mkdocs build --strict``), so
+            # docstring references into those packages stay as plain
+            # code text rather than autorefs.
             - https://docs.python.org/3/objects.inv
             - https://terok-ai.github.io/terok/objects.inv
-            - https://terok-ai.github.io/terok-sandbox/objects.inv
             - https://terok-ai.github.io/terok-shield/objects.inv
-            - https://terok-ai.github.io/terok-clearance/objects.inv
           options:
             docstring_style: google
             show_source: true

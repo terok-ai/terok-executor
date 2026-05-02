@@ -538,7 +538,7 @@ def ensure_vault_routes(cfg: SandboxConfig | None = None) -> Path:
     """Generate ``routes.json`` from the YAML roster and write it to disk.
 
     The routes file is written to the path configured in
-    [`SandboxConfig`][terok_sandbox.SandboxConfig] (typically
+    `SandboxConfig` (typically
     ``~/.local/share/terok/vault/routes.json``).
 
     When *cfg* is ``None``, falls back to standalone defaults.
