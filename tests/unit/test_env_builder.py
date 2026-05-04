@@ -1034,19 +1034,19 @@ class TestSharedConfigMountsUnit:
     """Unit tests for the internal shared mount builder."""
 
     def test_creates_host_dirs(self, roster, tmp_path):
-        mounts = _shared_config_mounts(roster, tmp_path, task_dir=tmp_path / "task")
+        mounts = _shared_config_mounts(roster, tmp_path)
         assert len(mounts) > 0
         assert (tmp_path / "_claude-config").is_dir()
 
     def test_deduplicates_by_host_dir(self, roster, tmp_path):
-        mounts = _shared_config_mounts(roster, tmp_path, task_dir=tmp_path / "task")
+        mounts = _shared_config_mounts(roster, tmp_path)
         # Directory mounts (rw shared dir) must be unique by host path; ro
         # credential shadows are layered on top and reuse the parent.
         dir_paths = [str(m.host_path) for m in mounts if not m.read_only]
         assert len(dir_paths) == len(set(dir_paths))
 
     def test_all_use_shared_label(self, roster, tmp_path):
-        mounts = _shared_config_mounts(roster, tmp_path, task_dir=tmp_path / "task")
+        mounts = _shared_config_mounts(roster, tmp_path)
         for m in mounts:
             assert m.sharing == "shared", f"Expected sharing='shared', got: {m.sharing}"
 
@@ -1056,8 +1056,7 @@ class TestSharedConfigMountsUnit:
         host_cred.parent.mkdir(parents=True)
         host_cred.write_text('{"phantom": true}')
 
-        task_dir = tmp_path / "task"
-        mounts = _shared_config_mounts(roster, tmp_path, task_dir=task_dir)
+        mounts = _shared_config_mounts(roster, tmp_path)
         cred = next(
             (m for m in mounts if m.container_path == "/home/dev/.claude/.credentials.json"),
             None,
@@ -1066,27 +1065,25 @@ class TestSharedConfigMountsUnit:
         assert cred.read_only is True
         assert cred.host_path == host_cred
 
-    def test_credential_file_uses_placeholder_when_host_absent(self, roster, tmp_path):
-        """Host has no credential — ro bind sources from a per-task placeholder."""
-        task_dir = tmp_path / "task"
-        mounts = _shared_config_mounts(roster, tmp_path, task_dir=task_dir)
+    def test_credential_file_touched_when_host_absent(self, roster, tmp_path):
+        """Host has no credential — touch an empty file at the natural path so
+        podman doesn't materialise the bind target as root with mode 0700."""
+        mounts = _shared_config_mounts(roster, tmp_path)
         cred = next(
             (m for m in mounts if m.container_path == "/home/dev/.claude/.credentials.json"),
             None,
         )
         assert cred is not None
         assert cred.read_only is True
-        assert cred.host_path.is_relative_to(task_dir / "cred-placeholders")
+        assert cred.host_path == tmp_path / "_claude-config" / ".credentials.json"
         assert cred.host_path.exists()
         assert cred.host_path.stat().st_size == 0
 
     def test_credential_file_skipped_when_provider_exposed(self, roster, tmp_path):
         """Providers in expose set keep the writable mount — no ro shadow."""
-        task_dir = tmp_path / "task"
         mounts = _shared_config_mounts(
             roster,
             tmp_path,
-            task_dir=task_dir,
             expose_credential_providers=frozenset({"claude"}),
         )
         cred = [m for m in mounts if m.container_path == "/home/dev/.claude/.credentials.json"]

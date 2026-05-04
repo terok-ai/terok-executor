@@ -282,17 +282,11 @@ def assemble_container_env(
     volumes.append(VolumeSpec(spec.workspace_host_path, "/workspace", sharing=Sharing.PRIVATE))
 
     # 8. Shared config mounts from roster
-    #
-    #    Resolve task_dir up-front so the credential-shadow path has a
-    #    private scratch location for placeholder files when the host
-    #    has no credential yet.  The *task_dir = ...* assignment that
-    #    used to live near the return is now this resolution.
     mounts_base = spec.envs_dir or _mounts_dir()
     task_dir = spec.task_dir or Path(tempfile.mkdtemp(prefix=f"terok-executor-{spec.task_id}-"))
     volumes += _shared_config_mounts(
         roster,
         mounts_base,
-        task_dir=task_dir,
         expose_credential_providers=spec.expose_credential_providers,
     )
 
@@ -385,14 +379,10 @@ def _resolve_git_identity(spec: ContainerEnvSpec, roster: AgentRoster) -> dict[s
     }
 
 
-_CRED_PLACEHOLDER_DIR = "cred-placeholders"
-
-
 def _shared_config_mounts(
     roster: AgentRoster,
     mounts_base: Path,
     *,
-    task_dir: Path,
     expose_credential_providers: frozenset[str] = frozenset(),
 ) -> list[VolumeSpec]:
     """Derive shared volume specs from the agent roster.
@@ -404,16 +394,17 @@ def _shared_config_mounts(
     For mounts that carry a [`MountDef.credential_file`][terok_executor.roster.loader.MountDef.credential_file],
     a read-only file mount is layered on top of the shared directory so an
     in-container ``/login`` cannot rewrite the host-side phantom token
-    (terok-ai/terok#873).  The source is the host file when present, else
-    a per-task empty placeholder under ``task_dir/cred-placeholders/`` —
-    so the read-only shadow is consistent regardless of host auth state.
+    (terok-ai/terok#873).  We ``touch()`` the host-side credential file
+    when missing so podman has a real bind source — otherwise podman
+    materialises the destination inside the container's userns as root
+    with mode 0700, leaving the file unreadable to the agent (and breaking
+    e.g. ``gh`` whose ``hosts.yml`` is normally absent on fresh installs).
 
     Providers in *expose_credential_providers* keep the writable mount —
     used by terok's experimental ``expose_oauth_token`` mode where the
     agent intentionally manages its own token.
     """
     specs: list[VolumeSpec] = []
-    placeholder_dir = task_dir / _CRED_PLACEHOLDER_DIR
 
     for m in roster.mounts:
         host_dir = mounts_base / m.host_dir
@@ -424,10 +415,8 @@ def _shared_config_mounts(
             continue
 
         host_file = host_dir / m.credential_file
-        if not host_file.exists():
-            host_file = placeholder_dir / m.host_dir
-            host_file.parent.mkdir(parents=True, exist_ok=True)
-            host_file.touch()
+        host_file.parent.mkdir(parents=True, exist_ok=True)
+        host_file.touch(exist_ok=True)
 
         container_file = f"{m.container_path}/{m.credential_file}"
         specs.append(VolumeSpec(host_file, container_file, read_only=True))
