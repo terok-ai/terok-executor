@@ -473,14 +473,20 @@ class ACPProxy:
             {"protocolVersion": ACP_PROTOCOL_VERSION, "clientCapabilities": {}},
         )
 
-        # Replay the client's original ``session/new`` params so the
-        # backend's session context matches what the client asked for.
-        # Falls back to a safe default for synthetic test clients that
-        # never sent params.
-        backend_session_new_params = self._client_session_new_params or {
-            "cwd": "/workspace",
-            "mcpServers": [],
-        }
+        # Replay the client's session/new params, but pin ``cwd`` to
+        # the container's workspace.  Clients (Zed) send their host-
+        # filesystem path for ``cwd`` — something like
+        # ``/var/home/user/prog/repo`` — which doesn't exist inside
+        # the container.  When claude-agent-acp's bootstrap runs, the
+        # spawn does ``chdir(cwd)`` before ``execve``; the missing
+        # cwd ENOENTs and the SDK's generic process-error handler
+        # reports the failure as the ever-misleading "Claude Code
+        # native binary not found at …".  All terok task containers
+        # mount the workspace at ``/workspace`` (set as ``WORKDIR``
+        # in the L0 image), so that's the correct path to forward.
+        backend_session_new_params = dict(self._client_session_new_params)
+        backend_session_new_params["cwd"] = "/workspace"
+        backend_session_new_params.setdefault("mcpServers", [])
         new_resp = await self._inline_request(
             "session/new",
             backend_session_new_params,
@@ -830,6 +836,9 @@ def _summarise_frame(frame: dict[str, Any]) -> str:
         val = params.get("value")
         if val is not None:
             parts.append(f"value={val!r}")
+        cwd = params.get("cwd")
+        if cwd:
+            parts.append(f"cwd={cwd!r}")
     if "error" in frame:
         err = frame["error"]
         if isinstance(err, dict):
