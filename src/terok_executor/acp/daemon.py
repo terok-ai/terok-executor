@@ -177,6 +177,35 @@ async def _run(
     return 0
 
 
+_WRITER_CLOSE_TIMEOUT_SEC = 2.0
+"""Cap on ``StreamWriter.wait_closed()`` — asyncio's transport sometimes
+fails to fire ``connection_lost`` on Unix-socket half-closes, which
+would otherwise leave the busy lock held forever and turn every
+subsequent client connection into a silent RST.  Two seconds is well
+past any normal close handshake; if we're still waiting after that,
+just release the lock and move on.
+"""
+
+
+async def _close_writer(writer: asyncio.StreamWriter) -> None:
+    """Close *writer* with a bounded ``wait_closed`` so we can't hang here.
+
+    Used in both branches of :func:`_make_handler` (busy-reject and the
+    normal teardown).  The timeout protects against a hung
+    ``wait_closed`` deadlocking the busy lock.
+    """
+    writer.close()
+    try:
+        await asyncio.wait_for(writer.wait_closed(), timeout=_WRITER_CLOSE_TIMEOUT_SEC)
+    except TimeoutError:
+        _logger.warning(
+            "proxy: writer.wait_closed() timed out after %.1fs; releasing lock anyway",
+            _WRITER_CLOSE_TIMEOUT_SEC,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("proxy: writer close error: %s", exc)
+
+
 def _make_handler(roster: ACPRoster):
     """Return an ``asyncio.start_unix_server`` callback bound to *roster*."""
     busy = asyncio.Lock()
@@ -187,11 +216,7 @@ def _make_handler(roster: ACPRoster):
         # so the second client sees an immediate disconnect instead of
         # racing on the proxy's session state.
         if busy.locked():
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception as exc:  # noqa: BLE001
-                _logger.debug("proxy: spurious second-client close error: %s", exc)
+            await _close_writer(writer)
             return
         async with busy:
             try:
@@ -202,11 +227,7 @@ def _make_handler(roster: ACPRoster):
                 # daemon log makes the cause obvious.
                 _logger.exception("proxy: attach loop crashed")
             finally:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception as exc:  # noqa: BLE001
-                    _logger.debug("proxy: writer close error: %s", exc)
+                await _close_writer(writer)
 
     return _handler
 

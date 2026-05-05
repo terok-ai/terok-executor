@@ -37,12 +37,15 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-DEFAULT_PROBE_TIMEOUT_SEC = 8.0
+DEFAULT_PROBE_TIMEOUT_SEC = 3.0
 """Per-call timeout for the full probe handshake.
 
-Generous margin so a cold container exec doesn't trip the timeout.
-Override per-call with the ``timeout`` parameter or globally via
-``TEROK_ACP_PROBE_TIMEOUT_SECS``.
+Bounds first-call ``session/new`` latency: the daemon probes every
+configured agent in parallel, so the slowest probe dominates.  Three
+seconds is enough for a healthy wrapper to handshake and short
+enough that a fully-unauthed image doesn't make the user wait ten
+seconds for a model picker.  Override per-call with the ``timeout``
+parameter or globally via ``TEROK_ACP_PROBE_TIMEOUT_SECS``.
 """
 
 ACP_PROTOCOL_VERSION = 1
