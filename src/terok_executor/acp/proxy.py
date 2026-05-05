@@ -66,15 +66,14 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 PROXY_REQUEST_ID_BASE = 1_000_000_000
-"""Numeric offset for JSON-RPC ids the proxy injects (replay of
-``initialize``/``session/new`` to the backend).  Stays integer so the
-backend's id-comparison code path matches the one it took during
-probe — claude-agent-acp (and likely other Node-side ACP servers)
-silently dropped string ids in practice, leaving the bind handshake
-hung waiting for a response.  ``1e9`` is well clear of any client
-counter we've seen but still inside JS's safe-integer range, and the
-proxy disambiguates its own ids by *membership* in
-:attr:`_pending_proxy_responses` rather than by numeric range."""
+"""Numeric offset for JSON-RPC ids the proxy injects during the bind
+handshake replay (``initialize`` / ``session/new`` /
+``session/set_model`` to the backend wrapper).  Integers (not strings)
+because some Node-side ACP servers silently dropped string ids; well
+clear of any client counter we've seen but still inside JS's safe-
+integer range.  Discrimination is by direct equality in the inline
+read loop — there's only one outstanding request at a time during
+the handshake."""
 
 JSONRPC_INVALID_REQUEST = -32600
 JSONRPC_INVALID_PARAMS = -32602
@@ -110,7 +109,6 @@ class ACPProxy:
         self._backend_exec_future: asyncio.Future | None = None
         self._backend_exec_pool: concurrent.futures.ThreadPoolExecutor | None = None
         self._proxy_request_counter = 0
-        self._pending_proxy_responses: dict[int, asyncio.Future] = {}
         self._closed = False
 
     async def run(
@@ -496,8 +494,14 @@ class ACPProxy:
 
         self._backend_exec_future = loop.run_in_executor(self._backend_exec_pool, _run_exec_wrapper)
 
-        # Start the backend → client pump.
-        self._backend_pump_task = loop.create_task(self._backend_pump_loop())
+        # Pump task is *not* started here.  ``_replay_backend_handshake``
+        # drives ``readline`` inline, the way :func:`probe_agent_models`
+        # does — that's the path we know works for these wrappers.  The
+        # earlier design ran an always-on pump task and parked futures
+        # in ``_pending_proxy_responses``; the bind hung silently with
+        # that arrangement even though probe's identical pipe wiring
+        # succeeded for the same wrapper.  Pump starts in
+        # :meth:`_start_pump_loop` after the handshake finishes.
 
         # Surface the exec_stdio return code (or exception) the moment
         # the wrapper exits — without this, a backend that crashes
@@ -518,13 +522,23 @@ class ACPProxy:
         self._backend_exec_future.add_done_callback(_log_exec_done)
 
     async def _replay_backend_handshake(self, *, model_id: str) -> None:
-        """Send ``initialize`` + ``session/new`` + ``set_config_option`` to the backend.
+        """Send ``initialize`` + ``session/new`` + ``set_model`` to the backend.
+
+        Drives the conversation **inline** — write a frame, read the
+        matching response, repeat — exactly mirroring
+        :func:`probe_agent_models`.  An always-on pump-task with parked
+        futures used to do this, but the same wrapper that responds to
+        probe's inline read silently failed to respond when bind ran
+        the parked-future variant; whatever the asyncio interaction is,
+        matching probe's pattern resolves it.  After the handshake
+        completes, :meth:`_start_pump_loop` swaps in the long-lived
+        pump so ongoing notifications flow back to the client.
 
         Captures the backend's session id so subsequent client frames
-        can be re-targeted on forwarding.  Errors propagate as
+        can be re-targeted on forwarding.  Errors raise
         :class:`AgentBindError`.
         """
-        await self._proxy_request(
+        await self._inline_request(
             "initialize",
             {"protocolVersion": ACP_PROTOCOL_VERSION, "clientCapabilities": {}},
         )
@@ -537,7 +551,7 @@ class ACPProxy:
             "cwd": "/workspace",
             "mcpServers": [],
         }
-        new_resp = await self._proxy_request(
+        new_resp = await self._inline_request(
             "session/new",
             backend_session_new_params,
         )
@@ -546,10 +560,91 @@ class ACPProxy:
             raise AgentBindError("backend session/new returned no sessionId")
         self._backend_session_id = backend_session_id
 
-        await self._proxy_request(
+        await self._inline_request(
             "session/set_model",
             {"sessionId": backend_session_id, "modelId": model_id},
         )
+
+        # Handshake done — switch to ongoing pump for client routing.
+        self._start_pump_loop()
+
+    def _start_pump_loop(self) -> None:
+        """Start the long-lived backend→client pump task.
+
+        Called after the handshake completes; before this point, the
+        bind code drives ``readline`` directly.  Idempotent — safe to
+        call once even if the connection has many bind retries.
+        """
+        if self._backend_pump_task is not None:
+            return
+        loop = asyncio.get_running_loop()
+        self._backend_pump_task = loop.create_task(self._backend_pump_loop())
+
+    async def _inline_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 15.0,
+    ) -> dict[str, Any]:
+        """Write a request frame and inline-read its matching response.
+
+        Used during the bind handshake before the pump task starts.
+        Numeric ids in the proxy's reserved range are still used so
+        the response is unambiguously ours, but discrimination here
+        is by simple ``id == expected`` rather than dict-membership
+        — there's only ever one outstanding request at a time on
+        this code path.
+
+        Raises :class:`AgentBindError` on timeout, malformed JSON,
+        unexpected ids, or backend disconnect during the read.
+        """
+        self._proxy_request_counter += 1
+        frame_id = PROXY_REQUEST_ID_BASE + self._proxy_request_counter
+        await self._send_to_backend(
+            {"jsonrpc": "2.0", "id": frame_id, "method": method, "params": params}
+        )
+        try:
+            return await asyncio.wait_for(
+                self._read_one_inline_response(frame_id, method),
+                timeout=timeout,
+            )
+        except TimeoutError as exc:
+            raise AgentBindError(
+                f"backend did not respond to proxy {method!r} within {timeout}s"
+            ) from exc
+
+    async def _read_one_inline_response(self, expected_id: int, method: str) -> dict[str, Any]:
+        """Read frames from the backend until the response with *expected_id* arrives.
+
+        Skips notifications (no ``id``) so a chatty wrapper's progress
+        events don't get mistaken for the reply.  Out-of-order ids on
+        a freshly-spawned single-track wrapper signal protocol confusion
+        — bail with :class:`AgentBindError` rather than queue.
+        """
+        assert self._backend_reader is not None
+        while True:
+            line = await self._backend_reader.readline()
+            if not line:
+                raise AgentBindError(f"backend closed stdout before responding to {method!r}")
+            try:
+                frame = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise AgentBindError(f"backend sent malformed JSON during {method!r}") from exc
+            if not isinstance(frame, dict):
+                raise AgentBindError(f"backend sent a non-object frame during {method!r}")
+            _logger.debug("← backend (handshake): %s", _summarise_frame(frame))
+            frame_id = frame.get("id")
+            if frame_id == expected_id:
+                if "error" in frame:
+                    raise AgentBindError(f"backend rejected {method!r}: {frame['error']}")
+                return frame
+            if "method" in frame and frame_id is None:
+                # Notification — log and keep reading.
+                continue
+            raise AgentBindError(
+                f"backend sent unexpected frame during {method!r}: id={frame_id!r}"
+            )
 
     # ── Forwarding ────────────────────────────────────────────────────
 
@@ -592,21 +687,10 @@ class ACPProxy:
                 continue
             _logger.debug("← backend: %s", _summarise_frame(frame))
 
-            # Drop responses to the proxy's own replay-handshake
-            # frames; they're consumed by ``_proxy_request``'s parked
-            # future, never forwarded to the client.  Discriminate by
-            # *membership* in the pending dict so we don't have to
-            # encode "this is a proxy id" into the frame itself —
-            # avoids the bug where some backends silently dropped
-            # string ids that we'd previously used as a marker.
-            frame_id = frame.get("id")
-            if isinstance(frame_id, int) and frame_id in self._pending_proxy_responses:
-                self._deliver_proxy_response(frame_id, frame)
-                continue
-
-            # Read ``_bound_agent`` at point of use — the pump task
-            # starts in ``_spawn_backend`` *before* bind completes, so
-            # snapshotting at loop entry would miss the assignment.
+            # The pump task starts only *after* the handshake replay
+            # completes, so any frame that arrives here belongs to
+            # the bound client, not to a proxy-internal request.  No
+            # id discrimination needed.
             if self._bound_agent is not None:
                 _rewrite_model_options_in_place(frame, self._bound_agent)
             self._translate_session_id_outbound(frame)
@@ -642,53 +726,6 @@ class ACPProxy:
             }
         )
 
-    # ── Proxy-originated request bookkeeping ─────────────────────────
-
-    async def _proxy_request(
-        self,
-        method: str,
-        params: dict[str, Any],
-        *,
-        timeout: float = 15.0,
-    ) -> dict[str, Any]:
-        """Send a proxy-originated request to the backend and await its response.
-
-        Each call gets a fresh ``px-N`` id and parks an ``asyncio.Future``
-        in :attr:`_pending_proxy_responses` keyed by *that* id — so the
-        backend's responses correlate by id, not by send-order, and
-        out-of-order replies (legal in JSON-RPC 2.0) resolve the right
-        future.
-
-        Errors come back as :class:`AgentBindError`: timeouts, JSON-RPC
-        ``error`` payloads, or backend disconnect during the wait.
-        """
-        self._proxy_request_counter += 1
-        frame_id = PROXY_REQUEST_ID_BASE + self._proxy_request_counter
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._pending_proxy_responses[frame_id] = future
-        try:
-            await self._send_to_backend(
-                {"jsonrpc": "2.0", "id": frame_id, "method": method, "params": params}
-            )
-            response = await asyncio.wait_for(future, timeout=timeout)
-        except TimeoutError as exc:
-            self._pending_proxy_responses.pop(frame_id, None)
-            raise AgentBindError(
-                f"backend did not respond to proxy {method!r} within {timeout}s"
-            ) from exc
-        except Exception:
-            self._pending_proxy_responses.pop(frame_id, None)
-            raise
-        if "error" in response:
-            raise AgentBindError(f"backend rejected proxy {method!r}: {response['error']}")
-        return response
-
-    def _deliver_proxy_response(self, frame_id: int, frame: dict[str, Any]) -> None:
-        """Resolve the future awaiting the response with id *frame_id*."""
-        pending = self._pending_proxy_responses.pop(frame_id, None)
-        if pending is not None and not pending.done():
-            pending.set_result(frame)
-
     # ── Outbound frame rewrites ──────────────────────────────────────
 
     def _translate_session_id_outbound(self, frame: dict[str, Any]) -> None:
@@ -709,14 +746,8 @@ class ACPProxy:
         return self._bound_agent is not None and self._backend_writer is not None
 
     async def _teardown_backend(self) -> None:
-        """Close pipes, cancel the pumps, wait for the exec to drain."""
+        """Close pipes, cancel the pump, wait for the exec to drain."""
         self._closed = True
-        # Cancel any still-pending proxy requests so awaiters unblock
-        # cleanly rather than hanging until their wait_for timeout.
-        for future in self._pending_proxy_responses.values():
-            if not future.done():
-                future.cancel()
-        self._pending_proxy_responses.clear()
         if self._backend_writer is not None:
             try:
                 self._backend_writer.close()
