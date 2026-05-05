@@ -239,15 +239,17 @@ class ACPRoster:
     def exec_wrapper(self, agent_id: str, *, stdin: object, stdout: object) -> int:
         """Run ``terok-{agent_id}-acp`` in the task container with bridged stdio.
 
-        The proxy spawns backends through this method so the sandbox
-        and container handles stay private to the roster.  Sync because
+        Used by the *probe* path, which drives a short single-shot
+        handshake and tears the wrapper down immediately.  Sync because
         :meth:`Sandbox.runtime.exec_stdio` is sync — callers in async
         contexts wrap the call in ``loop.run_in_executor``.
-        Stderr is left at exec_stdio's default (DEVNULL); capturing it
-        through a long-lived pipe was the structural difference between
-        bind (hung) and probe (worked) while debugging the silent-bind
-        regression — keep it off here and reach for an ad-hoc invocation
-        if you ever need to inspect a wrapper's stderr directly.
+
+        For the *bind* path, see :meth:`wrapper_argv` /
+        :func:`asyncio.create_subprocess_exec` direct invocation in
+        the proxy: the long-lived sandbox pump chain (kernel pipe →
+        FileIO → pump thread → ``proc.stdin`` → subprocess) ate
+        ``initialize`` writes silently for 15-second stretches and
+        skipping the indirection got the bind unstuck.
         """
         runtime = self._sandbox.runtime
         return runtime.exec_stdio(
@@ -256,6 +258,19 @@ class ACPRoster:
             stdin=stdin,
             stdout=stdout,
         )
+
+    def wrapper_argv(self, agent_id: str) -> list[str]:
+        """Return the argv that runs ``terok-{agent_id}-acp`` in this container.
+
+        Hands back something a caller can pass directly to
+        :func:`asyncio.create_subprocess_exec` — the bind path uses
+        this so it can attach asyncio's own pipe transports to the
+        wrapper subprocess without going through sandbox's pump
+        threads.  Currently podman-specific; a krun runtime would
+        need a different shape (which is why this method lives on
+        the roster, not on the proxy).
+        """
+        return ["podman", "exec", "-i", self._container_name, f"terok-{agent_id}-acp"]
 
     # ── Lower-level operations ───────────────────────────────────────
 

@@ -34,10 +34,8 @@ mid-connection.  All of these are tracked for v2.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
 from acp import (
@@ -106,8 +104,7 @@ class ACPProxy:
         self._backend_writer: asyncio.StreamWriter | None = None
         self._backend_reader: asyncio.StreamReader | None = None
         self._backend_pump_task: asyncio.Task | None = None
-        self._backend_exec_future: asyncio.Future | None = None
-        self._backend_exec_pool: concurrent.futures.ThreadPoolExecutor | None = None
+        self._backend_proc: asyncio.subprocess.Process | None = None
         self._proxy_request_counter = 0
         self._closed = False
 
@@ -420,130 +417,39 @@ class ACPProxy:
         )
 
     async def _spawn_backend(self, agent_id: str) -> None:
-        """Start ``terok-{agent_id}-acp`` and connect asyncio pipes to it.
+        """Spawn ``terok-{agent_id}-acp`` directly via :func:`asyncio.create_subprocess_exec`.
 
-        Uses :meth:`Sandbox.runtime.exec_stdio` in an executor thread —
-        the runtime primitive is sync and threading-based by design.
-        We hand the child three anonymous pipes (stdin / stdout /
-        stderr); the host-side ends are wrapped in asyncio
-        :class:`StreamReader`/:class:`StreamWriter` so the proxy loop
-        can drive them naturally.  Stderr is captured into a small
-        buffer so a silent bind hang has *some* breadcrumb when the
-        wrapper crashes early — without it, the only signal we'd ever
-        get is a 15-second timeout with no output.
+        Sandbox's ``exec_stdio`` runs the wrapper through a kernel-pipe-
+        pair plus pump threads (``proxy → pipe → pump → proc.stdin``;
+        ``proc.stdout → pump → pipe → asyncio reader``).  Probe uses
+        that path and works.  Bind used the same path and silently
+        hung: drains succeeded on the asyncio writer side, no chunks
+        ever arrived on the asyncio reader, the wrapper sat there
+        for 15 seconds and exited rc=0 the moment we closed stdin.
+        Bisection between probe (works) and bind (hangs) leaves the
+        long-lived pump path with the wrapper still running as the
+        only structural difference.
+
+        Bypass the indirection entirely: ``create_subprocess_exec``
+        wires podman's stdin/stdout straight into asyncio transports,
+        no pump threads, no intermediate pipe pair.  podman-specific;
+        :meth:`ACPRoster.wrapper_argv` hides the runtime detail behind
+        a roster method so a future krun runtime can plug in its own
+        argv without touching the proxy.
         """
-        loop = asyncio.get_running_loop()
-
-        host_to_child_r, host_to_child_w = os.pipe()
-        child_to_host_r, child_to_host_w = os.pipe()
-
-        # Wrap the host-side ends as asyncio streams BEFORE handing the
-        # other ends to the executor — connect_*_pipe attaches readers
-        # to the loop, so registration must happen on the loop thread.
-        write_pipe = os.fdopen(host_to_child_w, "wb", buffering=0)
-        write_transport, write_protocol = await loop.connect_write_pipe(
-            asyncio.streams.FlowControlMixin,
-            write_pipe,
+        argv = self._roster.wrapper_argv(agent_id)
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
-        self._backend_writer = asyncio.StreamWriter(write_transport, write_protocol, None, loop)
-
-        read_pipe = os.fdopen(child_to_host_r, "rb", buffering=0)
-        reader = asyncio.StreamReader(loop=loop)
-
-        # Wrap the StreamReaderProtocol to log every chunk and EOF —
-        # the bind has hung silently waiting for ``initialize``'s
-        # response, and the only way to tell whether bytes are
-        # actually arriving on the asyncio side (vs being lost
-        # somewhere in the pipe / pump path) is to instrument the
-        # transport hand-off itself.  ``data_received`` is where
-        # the kernel pipe's bytes first hit Python; logging there
-        # bounds the bug to "before vs after asyncio".
-        class _TracingReaderProtocol(asyncio.StreamReaderProtocol):
-            def data_received(self_inner, data: bytes) -> None:  # noqa: N805
-                """Log + delegate every chunk the backend transport delivers."""
-                _logger.debug(
-                    "backend reader: %d bytes from transport: %r",
-                    len(data),
-                    data[:200],
-                )
-                super().data_received(data)
-
-            def eof_received(self_inner) -> bool | None:  # noqa: N805
-                """Log + delegate EOF from the backend's stdout pipe."""
-                _logger.debug("backend reader: EOF from transport")
-                return super().eof_received()
-
-        await loop.connect_read_pipe(
-            lambda: _TracingReaderProtocol(reader, loop=loop),
-            read_pipe,
-        )
-        self._backend_reader = reader
-
-        # Hand the *other* ends to the runtime via the roster's
-        # ``exec_wrapper`` — keeps the sandbox + container details
-        # behind the roster's public API instead of leaking them here.
-        # Stderr is *not* captured: the probe path runs the same
-        # wrapper without stderr capture and works fine; switching
-        # ``stderr=None`` (DEVNULL) to ``stderr=PIPE`` for the bind
-        # was the one structural difference between the two paths
-        # while bind hung silently.  If we ever need wrapper stderr
-        # for diagnostics, add it through a separate ad-hoc invocation
-        # rather than wiring it into the long-lived bind pipe set.
-        child_in = os.fdopen(host_to_child_r, "rb", buffering=0)
-        child_out = os.fdopen(child_to_host_w, "wb", buffering=0)
-
-        # Use a *dedicated* single-worker thread pool for the wrapper
-        # so the bind can never queue behind probe wrappers in the
-        # default executor.  Earlier observation: ``session/new`` runs
-        # the configured probes in parallel via ``run_in_executor(None, …)``;
-        # if the default pool is full the bind sits in the queue while
-        # ``_proxy_request`` ticks toward its 15s timeout.  Spawning
-        # a fresh executor scoped to this bind side-steps the
-        # contention entirely; the pool shuts down in ``_teardown_backend``.
-        self._backend_exec_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix=f"acp-bind-{agent_id}",
-        )
-
-        def _run_exec_wrapper() -> int:
-            """Bind-thread entry — runs in the dedicated executor's worker.
-
-            Logged at DEBUG so a bind hang we *don't* attribute to
-            queue contention can be ruled in or out at a glance:
-            this line firing means the wrapper subprocess actually
-            started.
-            """
-            _logger.debug("backend[%s] exec_wrapper starting", agent_id)
-            return self._roster.exec_wrapper(agent_id, stdin=child_in, stdout=child_out)
-
-        self._backend_exec_future = loop.run_in_executor(self._backend_exec_pool, _run_exec_wrapper)
-
-        # Pump task is *not* started here.  ``_replay_backend_handshake``
-        # drives ``readline`` inline, the way :func:`probe_agent_models`
-        # does — that's the path we know works for these wrappers.  The
-        # earlier design ran an always-on pump task and parked futures
-        # in ``_pending_proxy_responses``; the bind hung silently with
-        # that arrangement even though probe's identical pipe wiring
-        # succeeded for the same wrapper.  Pump starts in
-        # :meth:`_start_pump_loop` after the handshake finishes.
-
-        # Surface the exec_stdio return code (or exception) the moment
-        # the wrapper exits — without this, a backend that crashes
-        # before responding to ``initialize`` is invisible until the
-        # 15s ``_proxy_request`` timeout fires, hiding the real cause.
-        def _log_exec_done(future: asyncio.Future) -> None:
-            """Log the wrapper subprocess's exit signal asynchronously."""
-            if future.cancelled():
-                return
-            exc = future.exception()
-            if exc is not None:
-                _logger.warning("backend[%s] exec raised: %r", agent_id, exc)
-                return
-            rc = future.result()
-            level = logging.WARNING if rc != 0 else logging.DEBUG
-            _logger.log(level, "backend[%s] exec exited rc=%s", agent_id, rc)
-
-        self._backend_exec_future.add_done_callback(_log_exec_done)
+        if proc.stdin is None or proc.stdout is None:
+            raise AgentBindError("create_subprocess_exec returned no stdio pipes")
+        self._backend_writer = proc.stdin
+        self._backend_reader = proc.stdout
+        self._backend_proc = proc
+        _logger.debug("backend[%s] subprocess pid=%s started", agent_id, proc.pid)
 
     async def _replay_backend_handshake(self, *, model_id: str) -> None:
         """Send ``initialize`` + ``session/new`` + ``set_model`` to the backend.
@@ -779,7 +685,7 @@ class ACPProxy:
         return self._bound_agent is not None and self._backend_writer is not None
 
     async def _teardown_backend(self) -> None:
-        """Close pipes, cancel the pump, wait for the exec to drain."""
+        """Close stdin to the wrapper subprocess, cancel the pump, reap the proc."""
         self._closed = True
         if self._backend_writer is not None:
             try:
@@ -795,20 +701,31 @@ class ACPProxy:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
             self._backend_pump_task = None
-        if self._backend_exec_future is not None:
+        if self._backend_proc is not None:
+            # Stdin's been closed above; healthy ACP wrappers exit on
+            # EOF.  Wait briefly, then SIGTERM, then SIGKILL — the
+            # daemon shouldn't keep zombie podman-exec processes
+            # around if a wrapper goes rogue.
+            proc = self._backend_proc
+            self._backend_proc = None
             try:
-                await asyncio.wait_for(self._backend_exec_future, timeout=2.0)
-            except Exception as exc:  # noqa: BLE001
-                _logger.debug("ACP proxy: backend exec drain: %s", exc)
-            self._backend_exec_future = None
-        if self._backend_exec_pool is not None:
-            # ``wait=False`` so a stuck wrapper thread (one that
-            # ignores stdin EOF and SIGTERM both) doesn't block the
-            # proxy connection from tearing down.  The pool's worker
-            # is a daemon thread, so the interpreter shuts it down
-            # at exit if it really refuses to die.
-            self._backend_exec_pool.shutdown(wait=False)
-            self._backend_exec_pool = None
+                rc = await asyncio.wait_for(proc.wait(), timeout=2.0)
+                _logger.debug("backend[%s] proc exited rc=%s", self._bound_agent, rc)
+            except TimeoutError:
+                _logger.warning(
+                    "backend[%s] proc didn't exit on stdin EOF; sending SIGTERM",
+                    self._bound_agent,
+                )
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                except TimeoutError:
+                    _logger.warning(
+                        "backend[%s] proc still alive after SIGTERM; SIGKILL",
+                        self._bound_agent,
+                    )
+                    proc.kill()
+                    await proc.wait()
 
 
 # ── Module-private helpers ────────────────────────────────────────────
