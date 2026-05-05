@@ -211,8 +211,8 @@ class TestSetModelPreBind:
         )
         assert responses[2]["error"]["code"] == -32602
 
-    def test_set_config_option_pre_bind_errors(self) -> None:
-        """Pre-bind ``set_config_option`` (non-model knob) has no backend — error."""
+    def test_set_config_option_pre_bind_non_model_errors(self) -> None:
+        """Pre-bind ``set_config_option`` for a non-model knob has no backend — error."""
         responses = asyncio.run(
             _run_proxy(
                 available=["claude:opus-4.6"],
@@ -230,6 +230,57 @@ class TestSetModelPreBind:
             )
         )
         assert "error" in responses[2]
+
+    def test_set_config_option_model_with_bad_namespace_errors(self) -> None:
+        """``set_config_option`` carrying a malformed model id is rejected before bind.
+
+        Older clients (Zed v1.0.x) drive model selection through this
+        method; the proxy treats it as a bind trigger when
+        ``configId == "model"``.  An unnamespaced value short-circuits
+        with -32602 instead of trying to spawn a phantom agent.
+        """
+        responses = asyncio.run(
+            _run_proxy(
+                available=["claude:opus-4.6"],
+                frames=[
+                    _frame("initialize", 1, protocolVersion=1),
+                    _frame("session/new", 2, cwd="/workspace"),
+                    _frame(
+                        "session/set_config_option",
+                        3,
+                        sessionId="proxy-1",
+                        configId="model",
+                        value="no-namespace",
+                    ),
+                ],
+            )
+        )
+        assert responses[2]["error"]["code"] == -32602
+
+    def test_set_config_option_with_category_alias_accepted(self) -> None:
+        """Older ACP clients send the discriminator as ``category`` not ``configId``.
+
+        The proxy accepts both spellings — exercised here via a bad
+        namespace so we don't need a live backend to reach the param
+        validation gate.
+        """
+        responses = asyncio.run(
+            _run_proxy(
+                available=["claude:opus-4.6"],
+                frames=[
+                    _frame("initialize", 1, protocolVersion=1),
+                    _frame("session/new", 2, cwd="/workspace"),
+                    _frame(
+                        "session/set_config_option",
+                        3,
+                        sessionId="proxy-1",
+                        category="model",
+                        value="no-namespace",
+                    ),
+                ],
+            )
+        )
+        assert responses[2]["error"]["code"] == -32602
 
 
 class TestPreBindForwardingRefusals:
@@ -346,8 +397,8 @@ class TestSmallHelpers:
         assert wire["currentValue"] == "claude:opus-4.6"
 
     def test_humanise_model_id(self) -> None:
-        """The label format is ``Agent — model``."""
-        assert _humanise_model_id("claude:opus-4.6") == "Claude — opus-4.6"
+        """The label format is ``Agent / model`` — ASCII-only, no em dash."""
+        assert _humanise_model_id("claude:opus-4.6") == "Claude / opus-4.6"
 
     def test_humanise_unnamespaced_passes_through(self) -> None:
         """Unrecognised ids are returned verbatim — no crash."""

@@ -50,6 +50,7 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SessionModelState,
+    SetSessionConfigOptionResponse,
 )
 
 from .model_options import (
@@ -222,13 +223,9 @@ class ACPProxy:
     async def _handle_set_model(self, frame: dict[str, Any]) -> None:
         """Bind on first call; forward namespace-stripped on subsequent calls.
 
-        Modern ACP picks the model via :data:`session/set_model`.  The
-        proxy uses the namespace prefix in the ``modelId`` (e.g.
-        ``claude:opus-4.6``) to choose which in-container agent
-        wrapper to spawn, then replays the bare sub-id (``opus-4.6``)
-        on to that backend.  Subsequent same-agent switches forward
-        the bare id directly; cross-agent switches are rejected in
-        v1 (would tear down the backend and rebind, which we defer).
+        Modern ACP's dedicated method for model selection.  Reads
+        ``modelId`` from the request, hands the namespaced id to the
+        shared :meth:`_select_model` driver.
         """
         raw_params = frame.get("params")
         if not isinstance(raw_params, dict):
@@ -246,17 +243,90 @@ class ACPProxy:
                 message="modelId must be a string",
             )
             return
+        await self._select_model(
+            frame,
+            namespaced=namespaced,
+            forward_field="modelId",
+            ack_kind="set_model",
+        )
+
+    async def _handle_set_config_option(self, frame: dict[str, Any]) -> None:
+        """Bind on category=model; otherwise forward to the bound backend.
+
+        Older ACP clients (Zed v1.0.x at the time of writing) pick the
+        model through :data:`session/set_config_option` with the
+        category set to ``"model"`` — modern clients use the dedicated
+        :data:`session/set_model` instead.  We accept both: a model
+        category here triggers the same bind flow as ``set_model``,
+        any other category passes through to the bound backend, and
+        a non-model category pre-bind is rejected as a no-op.
+
+        Field names: modern ACP names the discriminator ``configId``,
+        older clients sent ``category``; both are accepted.
+        """
+        raw_params = frame.get("params")
+        if not isinstance(raw_params, dict):
+            await self._reply_error(
+                frame.get("id"),
+                code=JSONRPC_INVALID_PARAMS,
+                message="params must be an object",
+            )
+            return
+        config_id = (
+            raw_params.get("configId") or raw_params.get("config_id") or raw_params.get("category")
+        )
+        value = raw_params.get("value")
+        if config_id == MODEL_OPTION_CATEGORY and isinstance(value, str):
+            await self._select_model(
+                frame,
+                namespaced=value,
+                forward_field="value",
+                ack_kind="set_config_option",
+            )
+            return
+
+        # Non-model config option: forward to backend if bound, reject otherwise.
+        if not self._is_bound:
+            await self._reply_error(
+                frame.get("id"),
+                code=JSONRPC_INVALID_REQUEST,
+                message="no agent bound — pick a model first",
+            )
+            return
+        await self._forward_to_backend(frame)
+
+    async def _select_model(
+        self,
+        frame: dict[str, Any],
+        *,
+        namespaced: str,
+        forward_field: str,
+        ack_kind: str,
+    ) -> None:
+        """Shared driver for ``set_model`` / ``set_config_option(category=model)``.
+
+        - ``namespaced`` is the ``agent:model`` id from the client.
+        - ``forward_field`` is the request param key whose value the
+          backend should see stripped of the ``agent:`` prefix
+          (``modelId`` for ``set_model``, ``value`` for
+          ``set_config_option``).
+        - ``ack_kind`` selects which response shape we send back on
+          first-bind: ``set_model`` → empty ``{}``, ``set_config_option``
+          → ``{config_options: [...]}``.
+        """
         agent_id, _, model_id = namespaced.partition(MODEL_NAMESPACE_SEP)
         if not agent_id or not model_id:
             await self._reply_error(
                 frame.get("id"),
                 code=JSONRPC_INVALID_PARAMS,
-                message=f"modelId must be 'agent:model', got {namespaced!r}",
+                message=f"model id must be 'agent:model', got {namespaced!r}",
             )
             return
 
         if self._bound_agent is None:
-            await self._bind_and_acknowledge(frame, agent_id=agent_id, model_id=model_id)
+            await self._bind_and_acknowledge(
+                frame, agent_id=agent_id, model_id=model_id, ack_kind=ack_kind
+            )
         elif agent_id != self._bound_agent:
             await self._reply_error(
                 frame.get("id"),
@@ -267,25 +337,7 @@ class ACPProxy:
                 ),
             )
         else:
-            await self._forward_to_backend(_with_params_field(frame, "modelId", model_id))
-
-    async def _handle_set_config_option(self, frame: dict[str, Any]) -> None:
-        """Forward non-model config options to the backend.
-
-        Modern ACP separates :data:`session/set_model` (model selection,
-        the proxy's bind trigger) from :data:`session/set_config_option`
-        (other config knobs like behavior / safety / performance).
-        Pre-bind there's no backend to forward to, so the client is
-        nudged to pick a model first.
-        """
-        if not self._is_bound:
-            await self._reply_error(
-                frame.get("id"),
-                code=JSONRPC_INVALID_REQUEST,
-                message="no agent bound — pick a model via session/set_model first",
-            )
-            return
-        await self._forward_to_backend(frame)
+            await self._forward_to_backend(_with_params_field(frame, forward_field, model_id))
 
     async def _passthrough_to_backend(self, frame: dict[str, Any]) -> None:
         """Forward unrecognised methods to the bound backend, or reject pre-bind.
@@ -298,7 +350,7 @@ class ACPProxy:
             await self._reply_error(
                 frame.get("id"),
                 code=JSONRPC_INVALID_REQUEST,
-                message="no agent bound — pick a model via session/set_model first",
+                message="no agent bound — pick a model first",
             )
             return
         await self._forward_to_backend(frame)
@@ -311,15 +363,21 @@ class ACPProxy:
         *,
         agent_id: str,
         model_id: str,
+        ack_kind: str,
     ) -> None:
-        """Spawn the backend wrapper and acknowledge the client's set_model.
+        """Spawn the backend wrapper and acknowledge the client.
 
-        :data:`session/set_model`'s response shape is empty
-        (:class:`SetSessionModelResponse` carries no required fields),
-        so once the spawn + handshake succeed we just send back
-        ``result: {}``.  On failure, replies with a JSON-RPC error and
-        leaves the proxy unbound — the client may try again with a
-        different agent.
+        ``ack_kind`` selects the response shape:
+
+        - ``"set_model"`` → :class:`SetSessionModelResponse` (empty
+          ``result: {}`` body).
+        - ``"set_config_option"`` → :class:`SetSessionConfigOptionResponse`
+          carrying the post-bind ``configOptions`` snapshot — namespaced
+          ids, but only for the bound agent's models so the client's
+          option list collapses to a single agent.
+
+        On failure, replies with a JSON-RPC error and leaves the proxy
+        unbound — the client may try again with a different agent.
         """
         try:
             await self._spawn_backend(agent_id)
@@ -335,7 +393,25 @@ class ACPProxy:
             return
 
         self._bound_agent = agent_id
-        await self._send_to_client({"jsonrpc": "2.0", "id": client_frame.get("id"), "result": {}})
+        ack_result = await self._build_bind_ack(agent_id, model_id, ack_kind=ack_kind)
+        await self._send_to_client(
+            {"jsonrpc": "2.0", "id": client_frame.get("id"), "result": ack_result}
+        )
+
+    async def _build_bind_ack(
+        self, agent_id: str, model_id: str, *, ack_kind: str
+    ) -> dict[str, Any]:
+        """Build the response body for the bind-triggering request."""
+        if ack_kind == "set_model":
+            return {}
+        # set_config_option ack — collapse the picker to the bound agent.
+        bound_models = await self._roster.list_available_agents()
+        collapsed = [m for m in bound_models if m.startswith(f"{agent_id}{MODEL_NAMESPACE_SEP}")]
+        current = f"{agent_id}{MODEL_NAMESPACE_SEP}{model_id}"
+        opt = _build_model_config_option(collapsed, current=current)
+        return SetSessionConfigOptionResponse(config_options=[opt]).model_dump(
+            by_alias=True, exclude_none=True, mode="json"
+        )
 
     async def _spawn_backend(self, agent_id: str) -> None:
         """Start ``terok-{agent_id}-acp`` and connect asyncio pipes to it.
@@ -652,11 +728,20 @@ def _build_session_new_response(session_id: str, models: list[str]) -> NewSessio
 
 
 def _humanise_model_id(namespaced: str) -> str:
-    """Render ``claude:opus-4.6`` as ``Claude — opus-4.6`` for the picker."""
+    """Render ``claude:opus-4.6`` as ``Claude / opus-4.6`` for the picker.
+
+    ASCII-only on purpose — model picker strings are read by every
+    downstream tool that talks to the proxy, and a plain ``/`` reads
+    cleanly without forcing an em dash through environments that
+    might mishandle wide chars.  We only mutate names *we* synthesise;
+    descriptions / labels coming back from real backend agents
+    (``Claude — Default (recommended)`` etc.) are forwarded verbatim
+    so the upstream's formatting decisions stand.
+    """
     agent, _, model = namespaced.partition(MODEL_NAMESPACE_SEP)
     if not agent or not model:
         return namespaced
-    return f"{agent.capitalize()} — {model}"
+    return f"{agent.capitalize()} / {model}"
 
 
 def _summarise_frame(frame: dict[str, Any]) -> str:
@@ -681,6 +766,12 @@ def _summarise_frame(frame: dict[str, Any]) -> str:
         mid = params.get("modelId") or params.get("model_id")
         if mid:
             parts.append(f"model={mid!r}")
+        cid = params.get("configId") or params.get("config_id") or params.get("category")
+        if cid:
+            parts.append(f"config={cid!r}")
+        val = params.get("value")
+        if val is not None:
+            parts.append(f"value={val!r}")
     if "error" in frame:
         err = frame["error"]
         if isinstance(err, dict):
