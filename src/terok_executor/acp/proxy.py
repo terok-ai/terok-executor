@@ -101,6 +101,8 @@ class ACPProxy:
         self._backend_reader: asyncio.StreamReader | None = None
         self._backend_pump_task: asyncio.Task | None = None
         self._backend_exec_future: asyncio.Future | None = None
+        self._backend_stderr_pump_task: asyncio.Task | None = None
+        self._backend_stderr_buffer: bytearray = bytearray()
         self._proxy_request_counter = 0
         self._pending_proxy_responses: dict[str, asyncio.Future] = {}
         self._closed = False
@@ -383,12 +385,18 @@ class ACPProxy:
             await self._spawn_backend(agent_id)
             await self._replay_backend_handshake(model_id=model_id)
         except AgentBindError as exc:
-            _logger.warning("ACP proxy: bind failed: %s", exc)
+            stderr_tail = self._captured_stderr_tail()
+            if stderr_tail:
+                _logger.warning("ACP proxy: bind failed: %s\nbackend stderr:\n%s", exc, stderr_tail)
+                detail = f"{exc}; backend stderr: {stderr_tail}"
+            else:
+                _logger.warning("ACP proxy: bind failed: %s (no stderr captured)", exc)
+                detail = str(exc)
             await self._teardown_backend()
             await self._reply_error(
                 client_frame.get("id"),
                 code=JSONRPC_INTERNAL_ERROR,
-                message=f"failed to bind agent {agent_id!r}: {exc}",
+                message=f"failed to bind agent {agent_id!r}: {detail}",
             )
             return
 
@@ -418,14 +426,19 @@ class ACPProxy:
 
         Uses :meth:`Sandbox.runtime.exec_stdio` in an executor thread —
         the runtime primitive is sync and threading-based by design.
-        We hand the child two anonymous pipes; the host-side ends are
-        wrapped in asyncio :class:`StreamReader`/:class:`StreamWriter`
-        so the proxy loop can drive them naturally.
+        We hand the child three anonymous pipes (stdin / stdout /
+        stderr); the host-side ends are wrapped in asyncio
+        :class:`StreamReader`/:class:`StreamWriter` so the proxy loop
+        can drive them naturally.  Stderr is captured into a small
+        buffer so a silent bind hang has *some* breadcrumb when the
+        wrapper crashes early — without it, the only signal we'd ever
+        get is a 15-second timeout with no output.
         """
         loop = asyncio.get_running_loop()
 
         host_to_child_r, host_to_child_w = os.pipe()
         child_to_host_r, child_to_host_w = os.pipe()
+        child_err_r, child_err_w = os.pipe()
 
         # Wrap the host-side ends as asyncio streams BEFORE handing the
         # other ends to the executor — connect_*_pipe attaches readers
@@ -445,18 +458,31 @@ class ACPProxy:
         )
         self._backend_reader = reader
 
+        err_pipe = os.fdopen(child_err_r, "rb", buffering=0)
+        err_reader = asyncio.StreamReader(loop=loop)
+        await loop.connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(err_reader, loop=loop),
+            err_pipe,
+        )
+
         # Hand the *other* ends to the runtime via the roster's
         # ``exec_wrapper`` — keeps the sandbox + container details
         # behind the roster's public API instead of leaking them here.
         child_in = os.fdopen(host_to_child_r, "rb", buffering=0)
         child_out = os.fdopen(child_to_host_w, "wb", buffering=0)
+        child_err = os.fdopen(child_err_w, "wb", buffering=0)
         self._backend_exec_future = loop.run_in_executor(
             None,
-            lambda: self._roster.exec_wrapper(agent_id, stdin=child_in, stdout=child_out),
+            lambda: self._roster.exec_wrapper(
+                agent_id, stdin=child_in, stdout=child_out, stderr=child_err
+            ),
         )
 
-        # Start the backend → client pump.
+        # Start the backend → client pump and the stderr drain.
         self._backend_pump_task = loop.create_task(self._backend_pump_loop())
+        self._backend_stderr_pump_task = loop.create_task(
+            self._backend_stderr_pump_loop(err_reader, agent_id)
+        )
 
     async def _replay_backend_handshake(self, *, model_id: str) -> None:
         """Send ``initialize`` + ``session/new`` + ``set_config_option`` to the backend.
@@ -503,6 +529,47 @@ class ACPProxy:
                 params = {**params, "sessionId": self._backend_session_id}
                 frame = {**frame, "params": params}
         await self._send_to_backend(frame)
+
+    async def _backend_stderr_pump_loop(self, reader: asyncio.StreamReader, agent_id: str) -> None:
+        """Drain the backend's stderr line-by-line into the daemon log + a buffer.
+
+        Two consumers want this output:
+
+        - Live monitoring: each line is emitted at WARNING immediately,
+          so a developer tailing the daemon log sees the wrapper's
+          complaints in real time.
+        - Bind-failure reporting: the buffer is read in
+          :meth:`_captured_stderr_tail` to enrich the JSON-RPC error
+          we send back to the client when ``initialize`` times out.
+
+        The buffer is bounded in :meth:`_captured_stderr_tail` so a
+        chatty wrapper can't OOM us via stderr.
+        """
+        while True:
+            try:
+                line = await reader.readline()
+            except (asyncio.CancelledError, asyncio.IncompleteReadError):
+                return
+            if not line:
+                return
+            self._backend_stderr_buffer.extend(line)
+            text = line.decode("utf-8", errors="replace").rstrip()
+            if text:
+                _logger.warning("backend[%s] stderr: %s", agent_id, text)
+
+    def _captured_stderr_tail(self, *, max_bytes: int = 4096) -> str:
+        """Return the last *max_bytes* of buffered backend stderr, decoded.
+
+        Used in the bind-failure path to give the user something
+        actionable in the JSON-RPC error reply (and the log).
+        Trimmed because the proxy's own log entry would otherwise
+        balloon if the wrapper went into a tight error loop before
+        the timeout fired.
+        """
+        if not self._backend_stderr_buffer:
+            return ""
+        tail = bytes(self._backend_stderr_buffer[-max_bytes:])
+        return tail.decode("utf-8", errors="replace").strip()
 
     async def _backend_pump_loop(self) -> None:
         """Read NDJSON frames from the backend and forward to the client.
@@ -641,7 +708,7 @@ class ACPProxy:
         return self._bound_agent is not None and self._backend_writer is not None
 
     async def _teardown_backend(self) -> None:
-        """Close pipes, cancel the pump, wait for the exec to drain."""
+        """Close pipes, cancel the pumps, wait for the exec to drain."""
         self._closed = True
         # Cancel any still-pending proxy requests so awaiters unblock
         # cleanly rather than hanging until their wait_for timeout.
@@ -656,13 +723,15 @@ class ACPProxy:
             except Exception as exc:  # noqa: BLE001
                 _logger.debug("ACP proxy: backend writer close: %s", exc)
             self._backend_writer = None
-        if self._backend_pump_task is not None:
-            self._backend_pump_task.cancel()
-            try:
-                await self._backend_pump_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            self._backend_pump_task = None
+        for task_attr in ("_backend_pump_task", "_backend_stderr_pump_task"):
+            task: asyncio.Task | None = getattr(self, task_attr)
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+                setattr(self, task_attr, None)
         if self._backend_exec_future is not None:
             try:
                 await asyncio.wait_for(self._backend_exec_future, timeout=2.0)
@@ -728,20 +797,21 @@ def _build_session_new_response(session_id: str, models: list[str]) -> NewSessio
 
 
 def _humanise_model_id(namespaced: str) -> str:
-    """Render ``claude:opus-4.6`` as ``Claude / opus-4.6`` for the picker.
+    """Render ``claude:opus-4.6`` as ``Claude: opus-4.6`` for the picker.
 
-    ASCII-only on purpose — model picker strings are read by every
-    downstream tool that talks to the proxy, and a plain ``/`` reads
-    cleanly without forcing an em dash through environments that
-    might mishandle wide chars.  We only mutate names *we* synthesise;
-    descriptions / labels coming back from real backend agents
-    (``Claude — Default (recommended)`` etc.) are forwarded verbatim
-    so the upstream's formatting decisions stand.
+    Colon (matching the wire-level :data:`MODEL_NAMESPACE_SEP`) keeps
+    slashes free for model ids that legitimately contain them, e.g.
+    OpenCode's ``opencode:opencode/big-pickle`` — humanising that to
+    ``OpenCode: opencode/big-pickle`` reads as one provider plus one
+    model id, while using ``/`` as the separator would chop the model
+    id in the middle.  We only mutate names *we* synthesise;
+    descriptions / labels coming back from real backend agents are
+    forwarded verbatim so upstream formatting decisions stand.
     """
     agent, _, model = namespaced.partition(MODEL_NAMESPACE_SEP)
     if not agent or not model:
         return namespaced
-    return f"{agent.capitalize()} / {model}"
+    return f"{agent.capitalize()}: {model}"
 
 
 def _summarise_frame(frame: dict[str, Any]) -> str:

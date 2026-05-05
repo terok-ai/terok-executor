@@ -176,15 +176,25 @@ class ACPRoster:
         proxy = ACPProxy(roster=self)
         await proxy.run(reader, writer)
 
-    def exec_wrapper(self, agent_id: str, *, stdin: object, stdout: object) -> int:
+    def exec_wrapper(
+        self,
+        agent_id: str,
+        *,
+        stdin: object,
+        stdout: object,
+        stderr: object | None = None,
+    ) -> int:
         """Run ``terok-{agent_id}-acp`` in the task container with bridged stdio.
 
         The proxy spawns backends through this method so the sandbox
         and container handles stay private to the roster.  Sync because
         :meth:`Sandbox.runtime.exec_stdio` is sync — callers in async
         contexts wrap the call in ``loop.run_in_executor``.
-        *stdin* / *stdout* are the host-side ends of an ``os.pipe()``
-        pair, typed as :class:`BinaryIO`.
+        *stdin* / *stdout* / *stderr* are the host-side ends of
+        ``os.pipe()`` pairs, typed as :class:`BinaryIO`.  Pass *stderr*
+        when you want the wrapper's stderr surfaced (the bind path
+        does, the probe doesn't — its failures already log a useful
+        message at the JSON-RPC layer).
         """
         runtime = self._sandbox.runtime
         return runtime.exec_stdio(
@@ -192,6 +202,7 @@ class ACPRoster:
             [f"terok-{agent_id}-acp"],
             stdin=stdin,
             stdout=stdout,
+            stderr=stderr,
         )
 
     # ── Lower-level operations ───────────────────────────────────────

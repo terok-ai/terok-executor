@@ -397,8 +397,18 @@ class TestSmallHelpers:
         assert wire["currentValue"] == "claude:opus-4.6"
 
     def test_humanise_model_id(self) -> None:
-        """The label format is ``Agent / model`` — ASCII-only, no em dash."""
-        assert _humanise_model_id("claude:opus-4.6") == "Claude / opus-4.6"
+        """The label format is ``Agent: model`` — colon keeps ``/`` free for model ids."""
+        assert _humanise_model_id("claude:opus-4.6") == "Claude: opus-4.6"
+
+    def test_humanise_model_id_preserves_slashes_in_model(self) -> None:
+        """Model ids with slashes (e.g. opencode/big-pickle) survive humanisation.
+
+        OpenCode's namespacing inside its own model ids mustn't collide
+        with the proxy's agent/model split — use the wire-level
+        separator (``:``) here so the model half of the label stays
+        intact.
+        """
+        assert _humanise_model_id("opencode:opencode/big-pickle") == "Opencode: opencode/big-pickle"
 
     def test_humanise_unnamespaced_passes_through(self) -> None:
         """Unrecognised ids are returned verbatim — no crash."""
