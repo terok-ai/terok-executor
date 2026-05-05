@@ -406,16 +406,13 @@ class ACPProxy:
     ) -> dict[str, Any]:
         """Build the response body for the bind-triggering request.
 
-        For ``set_config_option``, reply with the *full* aggregated
-        model list (every probed agent's models, namespaced) and the
-        new ``currentValue`` reflecting the user's choice.  An earlier
-        version of this method collapsed the option list to the bound
-        agent's models on the theory that cross-agent switches don't
-        work post-bind anyway — but the side effect was that Zed
-        rebuilt its picker from this response and lost every other
-        agent's models the moment the user picked their first one.
-        Cross-agent switches still error out (in :meth:`_select_model`),
-        just at the request level instead of by hiding the options.
+        ``set_model`` ack is empty.  ``set_config_option`` ack carries
+        the *full* aggregated option list with ``currentValue`` set to
+        the user's choice; do not filter to just the bound agent's
+        models — Zed rebuilds its picker from this response and a
+        filtered list silently hides the other agents.  Cross-agent
+        switches are still rejected, but at the request level
+        (:meth:`_select_model`), not by erasing the options.
         """
         if ack_kind == "set_model":
             return {}
@@ -657,11 +654,10 @@ class ACPProxy:
         """Serialise *frame* as NDJSON and write to the backend writer.
 
         Logs the byte count after ``drain`` returns so a future bind
-        hang can be split: if the count is logged but the reader
-        never sees a corresponding chunk in :class:`_TracingReaderProtocol`,
-        the bug is between the asyncio writer and the wrapper (pump
-        thread, kernel pipe, subprocess stdin); if the count never
-        logs, the writer itself didn't flush.
+        hang can be split: if the count is logged but no response
+        comes back in the corresponding ``← backend`` log, the bug is
+        between asyncio's writer and the wrapper subprocess; if the
+        count never logs, the writer itself didn't flush.
         """
         if self._backend_writer is None:
             raise AgentBindError("backend not running")
