@@ -484,6 +484,24 @@ class ACPProxy:
             self._backend_stderr_pump_loop(err_reader, agent_id)
         )
 
+        # Surface the exec_stdio return code (or exception) the moment
+        # the wrapper exits — without this, a backend that crashes
+        # before responding to ``initialize`` is invisible until the
+        # 15s ``_proxy_request`` timeout fires, hiding the real cause.
+        def _log_exec_done(future: asyncio.Future) -> None:
+            """Log the wrapper subprocess's exit signal asynchronously."""
+            if future.cancelled():
+                return
+            exc = future.exception()
+            if exc is not None:
+                _logger.warning("backend[%s] exec raised: %r", agent_id, exc)
+                return
+            rc = future.result()
+            level = logging.WARNING if rc != 0 else logging.DEBUG
+            _logger.log(level, "backend[%s] exec exited rc=%s", agent_id, rc)
+
+        self._backend_exec_future.add_done_callback(_log_exec_done)
+
     async def _replay_backend_handshake(self, *, model_id: str) -> None:
         """Send ``initialize`` + ``session/new`` + ``set_config_option`` to the backend.
 
@@ -582,9 +600,13 @@ class ACPProxy:
         while True:
             try:
                 line = await self._backend_reader.readline()
-            except (asyncio.CancelledError, asyncio.IncompleteReadError):
+            except asyncio.CancelledError:
+                return
+            except asyncio.IncompleteReadError:
+                _logger.debug("backend pump: reader saw incomplete read, exiting")
                 return
             if not line:
+                _logger.debug("backend pump: reader returned EOF, exiting")
                 return
             try:
                 frame = json.loads(line)
