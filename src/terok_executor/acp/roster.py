@@ -131,9 +131,11 @@ class ACPRoster:
         model ids of those that responded.  Cold-cache agents are
         probed in parallel via :func:`asyncio.gather`, so first-call
         latency is ``max(probe_time)`` rather than ``sum(probe_time)``.
-        Probe failures cache an empty roster — the agent is silently
-        skipped from the output and won't be re-probed for the
-        lifetime of the session.
+        Successful probes cache the model tuple for the daemon's
+        lifetime; failed probes are *not* cached so a transient cold
+        start (Node wrapper warming up, OAuth refresh in flight) can
+        recover on the next ``session/new`` instead of wedging the
+        roster empty until the daemon restarts.
         """
         agents_in_order = self.configured_agents
         cold = [a for a in agents_in_order if self._cache.get(self._cache_key(a)) is None]
@@ -146,19 +148,25 @@ class ACPRoster:
         return out
 
     async def warm(self, agent_id: str) -> tuple[str, ...]:
-        """Probe *agent_id* and store its roster in the cache.
+        """Probe *agent_id* and cache the result on success only.
 
         Returns the probed model tuple (possibly empty on failure).
-        Callers don't normally need this — :meth:`list_available_agents`
-        warms lazily — but workflows can call it eagerly after auth
-        completion to pre-populate the cache.
+        Failures are deliberately *not* cached — caching ``()`` on
+        timeout used to wedge the daemon's roster empty after a
+        single bad first-probe (cold container, slow Node start, OAuth
+        refresh) and only a daemon restart could recover.  The trade-
+        off is paid in cold-start latency: an agent that's genuinely
+        unavailable will be re-probed every ``session/new`` and add
+        its full timeout to the response.  The cache is per-daemon,
+        not per-connection, so once an agent probes successfully its
+        roster is reused across every Zed reconnect.
         """
         key = self._cache_key(agent_id)
         try:
             models = await self._probe(agent_id)
         except ProbeError as exc:
             _logger.warning("ACP probe failed for agent %r: %s", agent_id, exc)
-            models = ()
+            return ()
         self._cache.put(key, models)
         return models
 

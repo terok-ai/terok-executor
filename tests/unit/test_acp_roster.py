@@ -157,3 +157,57 @@ class TestListAvailableAgents:
         sandbox = Sandbox(config=SandboxConfig(), runtime=rt)
         roster = _make_roster(sandbox, image_id="img-bare")
         assert asyncio.run(roster.list_available_agents()) == []
+
+
+class TestWarm:
+    """Probe success / failure caching contract."""
+
+    def test_failed_probe_is_not_cached(self) -> None:
+        """A failing probe leaves the cache cold — the next call re-probes.
+
+        Caching empty tuples on failure used to wedge the daemon
+        empty after a single bad first-probe (cold container, slow
+        Node start, OAuth refresh racing the 3-second timeout) — only
+        a daemon restart could recover.  Now ``warm`` returns ``()``
+        but does *not* insert; the next ``list_available_agents`` re-
+        runs the probe and a now-warm container can succeed.
+        """
+        from terok_executor.acp.probe import ProbeError
+
+        cache = AgentRosterCache()
+        roster = _make_roster(_build_sandbox_with_image("claude"), cache=cache)
+        attempts: list[str] = []
+
+        async def _failing_probe(agent_id: str) -> tuple[str, ...]:
+            attempts.append(agent_id)
+            raise ProbeError(f"probe timed out for agent {agent_id!r}")
+
+        roster._probe = _failing_probe  # type: ignore[method-assign]
+        result = asyncio.run(roster.warm("claude"))
+        assert result == ()
+        # Cache stays cold — no entry under the failed agent's key.
+        assert (
+            cache.get(CacheKey(image_id="img-test", auth_identity="global", agent_id="claude"))
+            is None
+        )
+        # And so a re-call goes through `_probe` a second time.
+        asyncio.run(roster.warm("claude"))
+        assert attempts == ["claude", "claude"]
+
+    def test_successful_probe_caches_result(self) -> None:
+        """A successful probe stores the model tuple for the daemon's lifetime."""
+        cache = AgentRosterCache()
+        roster = _make_roster(_build_sandbox_with_image("claude"), cache=cache)
+        attempts: list[str] = []
+
+        async def _succeeding_probe(agent_id: str) -> tuple[str, ...]:
+            attempts.append(agent_id)
+            return ("opus-4.6",)
+
+        roster._probe = _succeeding_probe  # type: ignore[method-assign]
+        first = asyncio.run(roster.warm("claude"))
+        # Second list_available_agents call should hit the cache, not re-probe.
+        second = asyncio.run(roster.list_available_agents())
+        assert first == ("opus-4.6",)
+        assert second == ["claude:opus-4.6"]
+        assert attempts == ["claude"]
