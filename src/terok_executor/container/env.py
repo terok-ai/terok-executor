@@ -416,7 +416,8 @@ def _shared_config_mounts(
 
         host_file = host_dir / m.credential_file
         host_file.parent.mkdir(parents=True, exist_ok=True)
-        host_file.touch(exist_ok=True)
+        if not host_file.exists():
+            host_file.touch()
 
         container_file = f"{m.container_path}/{m.credential_file}"
         specs.append(VolumeSpec(host_file, container_file, read_only=True))
