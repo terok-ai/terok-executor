@@ -449,8 +449,32 @@ class ACPProxy:
 
         read_pipe = os.fdopen(child_to_host_r, "rb", buffering=0)
         reader = asyncio.StreamReader(loop=loop)
+
+        # Wrap the StreamReaderProtocol to log every chunk and EOF —
+        # the bind has hung silently waiting for ``initialize``'s
+        # response, and the only way to tell whether bytes are
+        # actually arriving on the asyncio side (vs being lost
+        # somewhere in the pipe / pump path) is to instrument the
+        # transport hand-off itself.  ``data_received`` is where
+        # the kernel pipe's bytes first hit Python; logging there
+        # bounds the bug to "before vs after asyncio".
+        class _TracingReaderProtocol(asyncio.StreamReaderProtocol):
+            def data_received(self_inner, data: bytes) -> None:  # noqa: N805
+                """Log + delegate every chunk the backend transport delivers."""
+                _logger.debug(
+                    "backend reader: %d bytes from transport: %r",
+                    len(data),
+                    data[:200],
+                )
+                super().data_received(data)
+
+            def eof_received(self_inner) -> bool | None:  # noqa: N805
+                """Log + delegate EOF from the backend's stdout pipe."""
+                _logger.debug("backend reader: EOF from transport")
+                return super().eof_received()
+
         await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(reader, loop=loop),
+            lambda: _TracingReaderProtocol(reader, loop=loop),
             read_pipe,
         )
         self._backend_reader = reader
@@ -708,13 +732,22 @@ class ACPProxy:
         await self._client_writer.drain()
 
     async def _send_to_backend(self, frame: dict[str, Any]) -> None:
-        """Serialise *frame* as NDJSON and write to the backend writer."""
+        """Serialise *frame* as NDJSON and write to the backend writer.
+
+        Logs the byte count after ``drain`` returns so a future bind
+        hang can be split: if the count is logged but the reader
+        never sees a corresponding chunk in :class:`_TracingReaderProtocol`,
+        the bug is between the asyncio writer and the wrapper (pump
+        thread, kernel pipe, subprocess stdin); if the count never
+        logs, the writer itself didn't flush.
+        """
         if self._backend_writer is None:
             raise AgentBindError("backend not running")
         _logger.debug("→ backend: %s", _summarise_frame(frame))
         data = (json.dumps(frame) + "\n").encode("utf-8")
         self._backend_writer.write(data)
         await self._backend_writer.drain()
+        _logger.debug("backend writer: drained %d bytes", len(data))
 
     async def _reply_error(self, request_id: Any, *, code: int, message: str) -> None:
         """Send a JSON-RPC error response to the client."""
