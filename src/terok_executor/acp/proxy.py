@@ -130,6 +130,7 @@ class ACPProxy:
                 if not isinstance(frame, dict):
                     _logger.warning("ACP proxy: client sent non-object JSON-RPC frame, ignoring")
                     continue
+                _logger.debug("← client: %s", _summarise_frame(frame))
                 await self._handle_client_frame(frame)
         finally:
             await self._teardown_backend()
@@ -450,6 +451,7 @@ class ACPProxy:
             if not isinstance(frame, dict):
                 _logger.warning("ACP proxy: backend sent non-object JSON-RPC frame, dropping")
                 continue
+            _logger.debug("← backend: %s", _summarise_frame(frame))
 
             # Drop responses to the proxy's own probe/replay frames;
             # they're consumed by ``_await_proxy_response``.
@@ -472,6 +474,7 @@ class ACPProxy:
         """Serialise *frame* as NDJSON and flush to the client writer."""
         if self._client_writer is None:
             return
+        _logger.debug("→ client: %s", _summarise_frame(frame))
         data = (json.dumps(frame) + "\n").encode("utf-8")
         self._client_writer.write(data)
         await self._client_writer.drain()
@@ -480,6 +483,7 @@ class ACPProxy:
         """Serialise *frame* as NDJSON and write to the backend writer."""
         if self._backend_writer is None:
             raise AgentBindError("backend not running")
+        _logger.debug("→ backend: %s", _summarise_frame(frame))
         data = (json.dumps(frame) + "\n").encode("utf-8")
         self._backend_writer.write(data)
         await self._backend_writer.drain()
@@ -653,6 +657,42 @@ def _humanise_model_id(namespaced: str) -> str:
     if not agent or not model:
         return namespaced
     return f"{agent.capitalize()} — {model}"
+
+
+def _summarise_frame(frame: dict[str, Any]) -> str:
+    """One-line summary for the wire-trace debug log: id, method, errors.
+
+    The full frame can be hundreds of bytes (model lists, prompt text)
+    and would drown the log on every send.  This trims to the routing
+    fields a debug session actually needs: which method, which session,
+    and the result/error head — enough to follow the conversation
+    without re-running with ``RUST_LOG=trace`` on the client.
+    """
+    parts: list[str] = []
+    if "method" in frame:
+        parts.append(f"method={frame['method']!r}")
+    if "id" in frame:
+        parts.append(f"id={frame['id']!r}")
+    params = frame.get("params")
+    if isinstance(params, dict):
+        sid = params.get("sessionId") or params.get("session_id")
+        if sid:
+            parts.append(f"session={sid!r}")
+        mid = params.get("modelId") or params.get("model_id")
+        if mid:
+            parts.append(f"model={mid!r}")
+    if "error" in frame:
+        err = frame["error"]
+        if isinstance(err, dict):
+            parts.append(f"error={err.get('code')!r} {err.get('message')!r}")
+    elif "result" in frame:
+        res = frame["result"]
+        if isinstance(res, dict):
+            keys = ",".join(sorted(res.keys()))
+            parts.append(f"result-keys=[{keys}]")
+        else:
+            parts.append("result=…")
+    return " ".join(parts) or "<empty>"
 
 
 def _with_params_field(frame: dict[str, Any], field_name: str, new_value: Any) -> dict[str, Any]:

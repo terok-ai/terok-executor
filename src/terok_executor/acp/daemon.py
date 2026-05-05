@@ -84,7 +84,13 @@ def serve_acp(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Argv entry — ``terok-executor acp <container_name> <socket_path>``."""
+    """Argv entry — ``terok-executor acp <container_name> <socket_path>``.
+
+    Set ``TEROK_ACP_DEBUG=1`` (or any non-empty value) to drop the log
+    level to ``DEBUG`` — the proxy then traces every JSON-RPC frame
+    in/out of the daemon, which is what you usually want when chasing
+    a "client X did/didn't send method Y" mystery.
+    """
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 2:
         print(
@@ -93,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     cname, sock_str = args
-    logging.basicConfig(level=logging.INFO, format="acp[%(levelname)s] %(message)s")
+    level = logging.DEBUG if os.environ.get("TEROK_ACP_DEBUG") else logging.INFO
+    logging.basicConfig(level=level, format="acp[%(levelname)s] %(message)s")
     return serve_acp(cname, Path(sock_str))
 
 
