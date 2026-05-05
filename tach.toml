@@ -219,6 +219,7 @@ depends_on = [
 [[modules]]
 path = "terok_executor.commands"
 depends_on = [
+    "terok_executor.acp",
     "terok_executor.container.build",
     "terok_executor.container.runner",
     "terok_executor.credentials.auth",

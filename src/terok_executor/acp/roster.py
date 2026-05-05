@@ -113,7 +113,6 @@ class ACPRoster:
     def __init__(
         self,
         *,
-        task_id: str,
         container_name: str,
         image_id: str,
         sandbox: Sandbox,
@@ -122,7 +121,6 @@ class ACPRoster:
         cache: AgentRosterCache | None = None,
         auth_source: Callable[[str], list[str]] | None = None,
     ) -> None:
-        self._task_id = task_id
         self._container_name = container_name
         self._image_id = image_id
         self._sandbox = sandbox
@@ -250,8 +248,3 @@ class ACPRoster:
         )
 
     # ── Queries ──────────────────────────────────────────────────────
-
-    @property
-    def task_id(self) -> str:
-        """Identifier of the running task this roster aggregates."""
-        return self._task_id

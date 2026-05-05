@@ -39,7 +39,6 @@ def _make_roster(
     keeps test bodies focused on assertions, not setup.
     """
     return ACPRoster(
-        task_id="t1",
         container_name="c1",
         image_id=image_id,
         sandbox=sandbox,
