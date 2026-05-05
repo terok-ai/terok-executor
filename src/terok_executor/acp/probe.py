@@ -105,7 +105,13 @@ async def probe_agent_models(
 
     read_pipe = os.fdopen(host_out_r, "rb", buffering=0)
     reader = asyncio.StreamReader(loop=loop)
-    await loop.connect_read_pipe(
+    # Capture the transport so the cleanup ``finally`` can close *it*
+    # — closing the FileIO ``read_pipe`` directly leaves asyncio's
+    # epoll registration on a dead fd, and when the next subprocess
+    # gets that fd number back from the kernel its events are silently
+    # routed to the dead transport.  Took several days of bind hangs
+    # to track down; do not "simplify" this back to ``read_pipe.close()``.
+    read_transport, _read_protocol = await loop.connect_read_pipe(
         lambda: asyncio.StreamReaderProtocol(reader, loop=loop),
         read_pipe,
     )
@@ -150,12 +156,13 @@ async def probe_agent_models(
             writer.close()
         except Exception as exc:  # noqa: BLE001
             _logger.debug("ACP probe writer close: %s", exc)
-        # Reader is closed implicitly when the read_pipe goes out of
-        # scope; explicitly cancel any pending readline by closing.
+        # Close the asyncio read transport — *not* the FileIO directly.
+        # Direct FileIO close leaks the epoll registration; see the
+        # connect_read_pipe call above for the war story.
         try:
-            read_pipe.close()
-        except OSError:
-            pass
+            read_transport.close()
+        except Exception as exc:  # noqa: BLE001
+            _logger.debug("ACP probe read transport close: %s", exc)
         # Don't hold up the caller indefinitely — the underlying
         # threads might be blocked in unkillable syscalls in pathological
         # cases.  The asyncio.run() shutdown will wait for them, but
