@@ -239,17 +239,18 @@ class ACPRoster:
     def exec_wrapper(self, agent_id: str, *, stdin: object, stdout: object) -> int:
         """Run ``terok-{agent_id}-acp`` in the task container with bridged stdio.
 
-        Used by the *probe* path, which drives a short single-shot
-        handshake and tears the wrapper down immediately.  Sync because
-        :meth:`Sandbox.runtime.exec_stdio` is sync — callers in async
-        contexts wrap the call in ``loop.run_in_executor``.
+        Used by the *probe* path: a short single-shot handshake whose
+        wrapper subprocess is torn down immediately afterwards.  Sync
+        because :meth:`Sandbox.runtime.exec_stdio` is sync — callers
+        in async contexts wrap the call in ``loop.run_in_executor``.
 
-        For the *bind* path, see :meth:`wrapper_argv` /
-        :func:`asyncio.create_subprocess_exec` direct invocation in
-        the proxy: the long-lived sandbox pump chain (kernel pipe →
-        FileIO → pump thread → ``proc.stdin`` → subprocess) ate
-        ``initialize`` writes silently for 15-second stretches and
-        skipping the indirection got the bind unstuck.
+        The *bind* path uses :meth:`wrapper_argv` and spawns the
+        wrapper directly via :func:`asyncio.create_subprocess_exec`
+        instead — fewer hops between the proxy and the subprocess
+        (no kernel pipe pair, no pump threads), and the long-lived
+        connection-shaped lifecycle there fits asyncio's subprocess
+        transport more naturally than sandbox's run-then-tear-down
+        primitive.
         """
         runtime = self._sandbox.runtime
         return runtime.exec_stdio(

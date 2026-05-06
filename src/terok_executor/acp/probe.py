@@ -148,25 +148,19 @@ async def probe_agent_models(
         _logger.warning("ACP probe for agent %r timed out after %.1fs", agent_id, timeout)
         raise ProbeError(f"probe timed out for agent {agent_id!r}") from exc
     finally:
-        # Close host-side streams; this closes the host-side pipe ends,
-        # which signals EOF to the child.  The child's reader thread
-        # ends, NullRuntime's script raises (mismatch) or returns, and
-        # the exec future settles.
         try:
             writer.close()
         except Exception as exc:  # noqa: BLE001
             _logger.debug("ACP probe writer close: %s", exc)
         # Close the asyncio read transport — *not* the FileIO directly.
         # Direct FileIO close leaks the epoll registration; see the
-        # connect_read_pipe call above for the war story.
+        # connect_read_pipe call above for the full story.
         try:
             read_transport.close()
         except Exception as exc:  # noqa: BLE001
             _logger.debug("ACP probe read transport close: %s", exc)
-        # Don't hold up the caller indefinitely — the underlying
-        # threads might be blocked in unkillable syscalls in pathological
-        # cases.  The asyncio.run() shutdown will wait for them, but
-        # caller-visible latency is bounded.
+        # Bounded wait: the executor thread can be wedged in an
+        # unkillable syscall, but caller-visible latency must not.
         try:
             await asyncio.wait_for(exec_future, timeout=2.0)
         except Exception as exc:  # noqa: BLE001

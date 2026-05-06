@@ -18,11 +18,12 @@ Two phases drive the lifecycle:
 - **Bound**: on the first ``session/set_model`` (modern ACP's
   dedicated method for model selection), the proxy uses the
   ``agent:`` namespace prefix to pick which in-container wrapper
-  to spawn via :meth:`Sandbox.runtime.exec_stdio`, replays
-  ``initialize`` + ``session/new`` + ``session/set_model`` (with
-  the bare sub-id) to it, and from then on bridges frames in both
-  directions.  Backend frames are mutated on the way out so model
-  ids visible to the client are namespaced again.
+  to spawn via :func:`asyncio.create_subprocess_exec` (argv from
+  :meth:`ACPRoster.wrapper_argv`), replays ``initialize`` +
+  ``session/new`` + ``session/set_model`` (with the bare sub-id)
+  to it, and from then on bridges frames in both directions.
+  Backend frames are mutated on the way out so model ids visible
+  to the client are namespaced again.
 
 V1 takes shortcuts where the design is still settling: one session
 per connection (Zed reconnects on every chat — fix on the roadmap),
@@ -424,25 +425,20 @@ class ACPProxy:
         )
 
     async def _spawn_backend(self, agent_id: str) -> None:
-        """Spawn ``terok-{agent_id}-acp`` directly via :func:`asyncio.create_subprocess_exec`.
+        """Spawn ``terok-{agent_id}-acp`` and attach asyncio pipes for the bind handshake.
 
-        Sandbox's ``exec_stdio`` runs the wrapper through a kernel-pipe-
-        pair plus pump threads (``proxy → pipe → pump → proc.stdin``;
-        ``proc.stdout → pump → pipe → asyncio reader``).  Probe uses
-        that path and works.  Bind used the same path and silently
-        hung: drains succeeded on the asyncio writer side, no chunks
-        ever arrived on the asyncio reader, the wrapper sat there
-        for 15 seconds and exited rc=0 the moment we closed stdin.
-        Bisection between probe (works) and bind (hangs) leaves the
-        long-lived pump path with the wrapper still running as the
-        only structural difference.
+        Uses :func:`asyncio.create_subprocess_exec` — proc.stdin /
+        proc.stdout become the proxy's writer / reader directly.  The
+        probe path goes through sandbox's ``exec_stdio`` instead
+        (single-shot, sync-friendly); bind's connection-shaped
+        lifecycle (long-lived, multi-request, cancel-on-disconnect)
+        fits asyncio's subprocess transport more naturally and avoids
+        the extra kernel pipe pair plus pump threads ``exec_stdio``
+        layers in.
 
-        Bypass the indirection entirely: ``create_subprocess_exec``
-        wires podman's stdin/stdout straight into asyncio transports,
-        no pump threads, no intermediate pipe pair.  podman-specific;
-        :meth:`ACPRoster.wrapper_argv` hides the runtime detail behind
-        a roster method so a future krun runtime can plug in its own
-        argv without touching the proxy.
+        :meth:`ACPRoster.wrapper_argv` hides the runtime detail
+        (currently podman-specific) so a future krun runtime can
+        plug in its own argv without touching the proxy.
         """
         argv = self._roster.wrapper_argv(agent_id)
         proc = await asyncio.create_subprocess_exec(
@@ -461,15 +457,14 @@ class ACPProxy:
     async def _replay_backend_handshake(self, *, model_id: str) -> None:
         """Send ``initialize`` + ``session/new`` + ``set_model`` to the backend.
 
-        Drives the conversation **inline** — write a frame, read the
-        matching response, repeat — exactly mirroring
-        :func:`probe_agent_models`.  An always-on pump-task with parked
-        futures used to do this, but the same wrapper that responds to
-        probe's inline read silently failed to respond when bind ran
-        the parked-future variant; whatever the asyncio interaction is,
-        matching probe's pattern resolves it.  After the handshake
-        completes, :meth:`_start_pump_loop` swaps in the long-lived
-        pump so ongoing notifications flow back to the client.
+        Drives the three frames inline — write, read the matching
+        response, repeat — instead of standing up the long-lived pump
+        task that handles post-bind traffic.  Inline keeps the
+        handshake's state local: no parked-future bookkeeping, no
+        id-discrimination at the pump, and a failed handshake tears
+        down without leaving an orphan pump.  :meth:`_start_pump_loop`
+        spins the pump up only after all three frames acknowledge,
+        from which point the client owns the conversation.
 
         Captures the backend's session id so subsequent client frames
         can be re-targeted on forwarding.  Errors raise
@@ -480,17 +475,13 @@ class ACPProxy:
             {"protocolVersion": ACP_PROTOCOL_VERSION, "clientCapabilities": {}},
         )
 
-        # Replay the client's session/new params, but pin ``cwd`` to
-        # the container's workspace.  Clients (Zed) send their host-
-        # filesystem path for ``cwd`` — something like
-        # ``/var/home/user/prog/repo`` — which doesn't exist inside
-        # the container.  When claude-agent-acp's bootstrap runs, the
-        # spawn does ``chdir(cwd)`` before ``execve``; the missing
-        # cwd ENOENTs and the SDK's generic process-error handler
-        # reports the failure as the ever-misleading "Claude Code
-        # native binary not found at …".  All terok task containers
-        # mount the workspace at ``/workspace`` (set as ``WORKDIR``
-        # in the L0 image), so that's the correct path to forward.
+        # Pin cwd to the container's workspace mount: ACP clients send
+        # their host filesystem path here (Zed: ``/var/home/user/prog/X``)
+        # which doesn't exist inside the container.  claude-agent-acp's
+        # bootstrap chdirs into cwd before exec; an ENOENT there
+        # surfaces as the famously misleading "Claude Code native
+        # binary not found …" — see the host↔sandbox path strategy
+        # note for why this is a stopgap.
         backend_session_new_params = dict(self._client_session_new_params)
         backend_session_new_params["cwd"] = "/workspace"
         backend_session_new_params.setdefault("mcpServers", [])
@@ -532,12 +523,12 @@ class ACPProxy:
     ) -> dict[str, Any]:
         """Write a request frame and inline-read its matching response.
 
-        Used during the bind handshake before the pump task starts.
-        Numeric ids in the proxy's reserved range are still used so
-        the response is unambiguously ours, but discrimination here
-        is by simple ``id == expected`` rather than dict-membership
-        — there's only ever one outstanding request at a time on
-        this code path.
+        Used during the bind handshake, before the pump task starts.
+        Only one request is outstanding at a time on this path, so
+        ``id == expected`` is enough to match the reply — no parked-
+        future bookkeeping.  Ids still come from the proxy's reserved
+        ``PROXY_REQUEST_ID_BASE+N`` range so responses are recognisable
+        as proxy-originated if the pump later sees one in transit.
 
         Raises :class:`AgentBindError` on timeout, malformed JSON,
         unexpected ids, or backend disconnect during the read.
