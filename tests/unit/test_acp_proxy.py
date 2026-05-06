@@ -16,11 +16,13 @@ import json
 
 import pytest
 
-from terok_executor.acp.proxy import (
-    ACPProxy,
+from terok_executor.acp.model_options import (
     _build_model_config_option,
     _humanise_model_id,
     _rewrite_model_options_in_place,
+)
+from terok_executor.acp.proxy import (
+    ACPProxy,
     _with_params_field,
 )
 

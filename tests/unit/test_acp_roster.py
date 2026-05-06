@@ -77,7 +77,7 @@ class TestAcpCapableAgents:
         # Build the same script the roster builds, so the key matches.
         agents = [a.strip() for a in agents_csv.split(",") if a.strip()]
         script = "; ".join(
-            f"command -v 'terok-{a}-acp' >/dev/null 2>&1 && echo {a}" for a in agents
+            f"command -v 'terok-{a}-acp' >/dev/null 2>&1 && echo '{a}'" for a in agents
         )
         rt.set_exec_result(
             "c1",

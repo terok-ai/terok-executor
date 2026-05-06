@@ -149,7 +149,7 @@ class ACPRoster:
         # silently fails on missing; we echo the agent name only on
         # success so the result is a newline-separated whitelist.
         script = "; ".join(
-            f"command -v 'terok-{agent}-acp' >/dev/null 2>&1 && echo {agent}" for agent in agents
+            f"command -v 'terok-{agent}-acp' >/dev/null 2>&1 && echo '{agent}'" for agent in agents
         )
         try:
             result = self._sandbox.runtime.exec(

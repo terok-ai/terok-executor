@@ -9,18 +9,9 @@ endpoint.  Lifetime is tied to the container: the daemon polls
 ``runtime.container(name).state`` and exits cleanly once the
 container is gone.
 
-Inputs are container-shaped — no notion of projects, tasks, or
-project IDs lives here.  Higher orchestrators (terok) translate
-their own concepts to ``(container_name, socket_path)`` and spawn
-this daemon as a subprocess (or call :func:`serve_acp` directly).
-
 Standalone use::
 
     terok-executor acp <container_name> <socket_path>
-
-The argv form mirrors the library entry point so consumers can pick
-either depending on whether they want a subprocess or an in-process
-daemon.
 """
 
 from __future__ import annotations

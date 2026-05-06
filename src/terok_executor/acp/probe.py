@@ -104,7 +104,7 @@ async def probe_agent_models(
     writer = asyncio.StreamWriter(write_transport, write_protocol, None, loop)
 
     read_pipe = os.fdopen(host_out_r, "rb", buffering=0)
-    reader = asyncio.StreamReader(loop=loop)
+    reader = asyncio.StreamReader()
     # Capture the transport so the cleanup ``finally`` can close *it*
     # — closing the FileIO ``read_pipe`` directly leaves asyncio's
     # epoll registration on a dead fd, and when the next subprocess
@@ -112,7 +112,7 @@ async def probe_agent_models(
     # routed to the dead transport.  Took several days of bind hangs
     # to track down; do not "simplify" this back to ``read_pipe.close()``.
     read_transport, _read_protocol = await loop.connect_read_pipe(
-        lambda: asyncio.StreamReaderProtocol(reader, loop=loop),
+        lambda: asyncio.StreamReaderProtocol(reader),
         read_pipe,
     )
 

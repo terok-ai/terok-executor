@@ -29,11 +29,6 @@ def _frame(method: str, **fields: object) -> bytes:
     return (json.dumps(payload) + "\n").encode("utf-8")
 
 
-def _read_request_id(frame: bytes) -> str:
-    """Pluck the ``id`` from a JSON-RPC request frame for response shaping."""
-    return json.loads(frame)["id"]
-
-
 class TestExtractModelIds:
     """The configOptions parser handles the schema variants we've seen."""
 
