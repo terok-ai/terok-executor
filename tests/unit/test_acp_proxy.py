@@ -286,13 +286,22 @@ class TestSetModelPreBind:
 
 
 class TestPreBindForwardingRefusals:
-    """Methods that need a backend are refused pre-bind."""
+    """``session/prompt`` reaches a backend through a lazy bind, or errors when there isn't one to bind."""
 
-    def test_session_prompt_pre_bind_errors(self) -> None:
-        """``session/prompt`` before bind cannot reach a backend — error."""
+    def test_session_prompt_errors_when_no_agents_probed(self) -> None:
+        """No probed agents → no default → prompt has nothing to bind to.
+
+        Surfaces a JSON-RPC error rather than silently dropping the
+        request.  Note the *current* behaviour with at least one probed
+        agent is to *lazy-bind* and forward — Zed-style clients that
+        skip explicit ``set_model`` rely on that.  Spawning a real
+        backend isn't doable from a unit test (it shells to ``podman
+        exec``), so the positive lazy-bind path is exercised manually
+        / via the integration walk-through.
+        """
         responses = asyncio.run(
             _run_proxy(
-                available=["claude:opus-4.6"],
+                available=[],
                 frames=[
                     _frame("initialize", 1, protocolVersion=1),
                     _frame("session/new", 2, cwd="/workspace"),
@@ -301,6 +310,7 @@ class TestPreBindForwardingRefusals:
             )
         )
         assert "error" in responses[2]
+        assert responses[2]["error"]["code"] == -32600
 
 
 class TestModelOptionRewriter:

@@ -100,6 +100,13 @@ class ACPProxy:
         self._client_session_id: str | None = None
         self._backend_session_id: str | None = None
         self._client_session_new_params: dict[str, Any] = {}
+        # The namespaced ``agent:model`` we advertised to the client
+        # as ``currentModelId`` in ``session/new``.  Used as the
+        # lazy-bind target for clients that go straight from
+        # ``session/new`` to ``session/prompt`` without first sending
+        # an explicit model selection — they trust that current value
+        # and we have to follow through on it.
+        self._default_namespaced: str | None = None
         self._backend_writer: asyncio.StreamWriter | None = None
         self._backend_reader: asyncio.StreamReader | None = None
         self._backend_pump_task: asyncio.Task | None = None
@@ -213,6 +220,11 @@ class ACPProxy:
 
         self._client_session_id = "proxy-1"
         models = await self._roster.list_available_agents()
+        # Same first-of-list rule as :func:`_build_session_new_response`'s
+        # ``currentModelId``; record it so a client that skips set_model
+        # and goes straight to a backend-needing method can be lazy-bound
+        # against the value it already saw advertised.
+        self._default_namespaced = models[0] if models else None
         result = _build_session_new_response(self._client_session_id, models)
         await self._send_to_client(
             {
@@ -342,22 +354,57 @@ class ACPProxy:
             await self._forward_to_backend(_with_params_field(frame, forward_field, model_id))
 
     async def _passthrough_to_backend(self, frame: dict[str, Any]) -> None:
-        """Forward unrecognised methods to the bound backend, or reject pre-bind.
+        """Forward unrecognised methods to the bound backend.
 
-        ``session/prompt`` and friends arrive here.  Pre-bind they have
-        no destination, so the client is told to pick a model first;
-        post-bind the proxy stays out of the way.
+        ``session/prompt`` and friends arrive here.  If we're already
+        bound the proxy stays out of the way.  If we're not — and the
+        client skipped explicit model selection — bind lazily to the
+        ``currentModelId`` we advertised in :meth:`_handle_session_new`,
+        because that's the contract Zed-style clients act on (they
+        trust the current value and prompt against it without an
+        explicit set_model).  If the proxy never advertised a current
+        (no probed agents), there's nothing to forward to and we have
+        to surface an error.
         """
         if not self._is_bound:
-            await self._reply_error(
-                frame.get("id"),
-                code=JSONRPC_INVALID_REQUEST,
-                message="no agent bound — pick a model first",
-            )
-            return
+            if self._default_namespaced is None:
+                await self._reply_error(
+                    frame.get("id"),
+                    code=JSONRPC_INVALID_REQUEST,
+                    message="no agent available — none of the configured wrappers probed successfully",
+                )
+                return
+            agent_id, _, model_id = self._default_namespaced.partition(MODEL_NAMESPACE_SEP)
+            try:
+                await self._bind(agent_id, model_id)
+            except AgentBindError as exc:
+                await self._reply_error(
+                    frame.get("id"),
+                    code=JSONRPC_INTERNAL_ERROR,
+                    message=f"failed to lazy-bind default agent {agent_id!r}: {exc}",
+                )
+                return
         await self._forward_to_backend(frame)
 
     # ── Bind: spawn backend + replay handshake ────────────────────────
+
+    async def _bind(self, agent_id: str, model_id: str) -> None:
+        """Spawn the backend wrapper and replay the handshake.
+
+        On success, sets :attr:`_bound_agent` so subsequent client
+        frames forward to the backend.  On failure, tears the
+        partially-set-up backend down and re-raises
+        :class:`AgentBindError`; the caller decides whether to surface
+        that as a JSON-RPC error or wrap it.
+        """
+        try:
+            await self._spawn_backend(agent_id)
+            await self._replay_backend_handshake(model_id=model_id)
+        except AgentBindError:
+            _logger.warning("ACP proxy: bind to %r failed", agent_id)
+            await self._teardown_backend()
+            raise
+        self._bound_agent = agent_id
 
     async def _bind_and_acknowledge(
         self,
@@ -367,34 +414,29 @@ class ACPProxy:
         model_id: str,
         ack_kind: str,
     ) -> None:
-        """Spawn the backend wrapper and acknowledge the client.
+        """Bind the backend and reply to the client request that triggered it.
 
-        ``ack_kind`` selects the response shape:
+        ``ack_kind`` selects the response shape for the triggering
+        request:
 
         - ``"set_model"`` → :class:`SetSessionModelResponse` (empty
           ``result: {}`` body).
-        - ``"set_config_option"`` → :class:`SetSessionConfigOptionResponse`
-          carrying the post-bind ``configOptions`` snapshot — namespaced
-          ids, but only for the bound agent's models so the client's
-          option list collapses to a single agent.
+        - ``"set_config_option"`` → :class:`SetSessionConfigOptionResponse``
+          carrying the post-bind ``configOptions`` snapshot.
 
-        On failure, replies with a JSON-RPC error and leaves the proxy
-        unbound — the client may try again with a different agent.
+        On bind failure, replies with a JSON-RPC error in lieu of the
+        ack.  The proxy stays unbound so the client may try again
+        with a different agent.
         """
         try:
-            await self._spawn_backend(agent_id)
-            await self._replay_backend_handshake(model_id=model_id)
+            await self._bind(agent_id, model_id)
         except AgentBindError as exc:
-            _logger.warning("ACP proxy: bind failed: %s", exc)
-            await self._teardown_backend()
             await self._reply_error(
                 client_frame.get("id"),
                 code=JSONRPC_INTERNAL_ERROR,
                 message=f"failed to bind agent {agent_id!r}: {exc}",
             )
             return
-
-        self._bound_agent = agent_id
         ack_result = await self._build_bind_ack(agent_id, model_id, ack_kind=ack_kind)
         await self._send_to_client(
             {"jsonrpc": "2.0", "id": client_frame.get("id"), "result": ack_result}
