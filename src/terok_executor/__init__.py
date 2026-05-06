@@ -35,6 +35,7 @@ from .acp import (
     AgentBindError,
     AgentRosterCache,
     ProbeError,
+    acp_socket_is_live,
     list_authenticated_agents,
 )
 
@@ -152,6 +153,7 @@ __all__ = [
     "AgentBindError",
     "AgentRosterCache",
     "ProbeError",
+    "acp_socket_is_live",
     "list_authenticated_agents",
     # Provider registry
     "AGENT_PROVIDERS",
