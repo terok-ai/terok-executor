@@ -248,7 +248,7 @@ class RawVault(StrictModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_legacy_socket_path(cls, data: object) -> object:
+    def _reject_legacy_socket_path(_cls, data: object) -> object:
         if isinstance(data, dict) and "socket_path" in data:
             raise ValueError(
                 "'socket_path' is no longer configurable — "
