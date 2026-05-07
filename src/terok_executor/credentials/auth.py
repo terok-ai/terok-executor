@@ -133,7 +133,7 @@ def authenticate(
     provider: str,
     *,
     mounts_dir: Path,
-    image: str,
+    image: str | Callable[[], str] | None = None,
     expose_token: bool = False,
 ) -> None:
     """Run the auth flow for *provider*, optionally scoped to a project.
@@ -151,7 +151,13 @@ def authenticate(
             ``host-auth-<provider>`` name.
         provider: Auth provider name (e.g. ``"claude"``).
         mounts_dir: Base directory for shared config bind-mounts.
-        image: Container image to use for the auth container.
+        image: Container image for the OAuth container.  Either a tag
+            string (eager) or a zero-arg callable returning the tag
+            (lazy — invoked only when the user actually chooses the
+            OAuth path).  ``None`` is fine for API-key-only providers,
+            where no container is launched.  Use the lazy form to avoid
+            paying the L1 build cost when the user might pick API key
+            from the OAuth-or-API-key prompt.
         expose_token: When True, copy the real credential files into
             the shared mount instead of writing a phantom marker.  Used
             by tier 3 (``expose_oauth_token``) where containers need
@@ -165,7 +171,8 @@ def authenticate(
         raise SystemExit(f"Unknown auth provider: {provider}. Available: {available}")
 
     if info.supports_oauth and info.supports_api_key:
-        # Both modes — let the user choose
+        # Both modes — let the user choose first; only resolve the image
+        # (and trigger any on-demand L1 build) if the user picks OAuth.
         print(f"Authenticate {info.label}:\n")
         print("  1. OAuth / interactive login (launches container)")
         print("  2. API key (paste key, no container needed)")
@@ -175,21 +182,43 @@ def authenticate(
             key = _prompt_api_key(info)
             store_api_key(provider, key)
             return
-        # choice == "1" or anything else → OAuth
         _run_auth_container(
-            project_id, info, mounts_dir=mounts_dir, image=image, expose_token=expose_token
+            project_id,
+            info,
+            mounts_dir=mounts_dir,
+            image=_resolve_image(image, provider),
+            expose_token=expose_token,
         )
 
     elif info.supports_api_key:
-        # API key only — fast path, no container
+        # API key only — fast path, no container, image never resolved.
         key = _prompt_api_key(info)
         store_api_key(provider, key)
 
     else:
-        # OAuth only
+        # OAuth only — image is required.
         _run_auth_container(
-            project_id, info, mounts_dir=mounts_dir, image=image, expose_token=expose_token
+            project_id,
+            info,
+            mounts_dir=mounts_dir,
+            image=_resolve_image(image, provider),
+            expose_token=expose_token,
         )
+
+
+def _resolve_image(image: str | Callable[[], str] | None, provider: str) -> str:
+    """Coerce *image* — eager string, lazy callable, or ``None`` — to a tag.
+
+    ``None`` means the caller didn't supply one and the OAuth path is
+    actually about to launch a container; that is a programming error,
+    not a user-recoverable one — raise.
+    """
+    if image is None:
+        raise ValueError(
+            f"OAuth auth for {provider!r} needs an L1 image; "
+            "pass image=<tag> or image=<callable returning tag>."
+        )
+    return image() if callable(image) else image
 
 
 def store_api_key(

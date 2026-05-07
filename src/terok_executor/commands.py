@@ -358,8 +358,15 @@ def _handle_auth(
         from .container.build import ensure_default_l1
         from .paths import mounts_dir
 
-        image = ensure_default_l1(base_image or DEFAULT_BASE_IMAGE)
-        authenticate(None, agent, mounts_dir=mounts_dir(), image=image)
+        # Lazy: if the user picks API key from the OAuth-or-API-key prompt,
+        # ensure_default_l1 is never invoked and we don't pay for an L1 build.
+        base = base_image or DEFAULT_BASE_IMAGE
+        authenticate(
+            None,
+            agent,
+            mounts_dir=mounts_dir(),
+            image=lambda: ensure_default_l1(base),
+        )
 
     # Write vault URLs to shared config files (e.g. Vibe config.toml, gh config.yml)
     from .credentials.vault_config import write_vault_config

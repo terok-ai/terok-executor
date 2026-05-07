@@ -336,9 +336,15 @@ def _fix_credentials(provider: str, *, base_image: str) -> bool:
     from terok_executor.credentials.vault_config import write_vault_config
     from terok_executor.paths import mounts_dir
 
-    image = ensure_default_l1(base_image)
+    # Lazy image resolution — picking API key from the OAuth-or-API-key prompt
+    # short-circuits before we ever invoke ensure_default_l1.
     try:
-        authenticate(None, provider, mounts_dir=mounts_dir(), image=image)
+        authenticate(
+            None,
+            provider,
+            mounts_dir=mounts_dir(),
+            image=lambda: ensure_default_l1(base_image),
+        )
     except SystemExit:
         return False
 

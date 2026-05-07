@@ -704,3 +704,191 @@ class TestStoreApiKey:
         stored = db.load_credential("work", "claude")
         db.close()
         assert stored["key"] == "sk-ant-key"
+
+
+class TestAuthenticateImageLaziness:
+    """Verify ``authenticate(image=callable)`` defers L1 build to the OAuth path.
+
+    Picking API key from the OAuth-or-API-key prompt must short-circuit
+    before the lazy resolver fires — otherwise users who only ever use
+    API keys still pay for an L1 image build they don't need.
+    """
+
+    def test_api_key_choice_skips_image_resolution(self, tmp_path: Path) -> None:
+        """User picks ``2`` (API key) → resolver is never called."""
+        from unittest.mock import MagicMock, patch
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="claude",
+            label="Claude",
+            host_dir_name="_claude-config",
+            container_mount="/home/dev/.claude",
+            command=["claude"],
+            banner_hint="",
+            modes=("oauth", "api_key"),
+            api_key_hint="hint",
+        )
+        resolver = MagicMock()
+        with (
+            patch.dict(
+                "terok_executor.credentials.auth.AUTH_PROVIDERS",
+                {"claude": provider},
+                clear=True,
+            ),
+            patch("builtins.input", return_value="2"),
+            patch(
+                "terok_executor.credentials.auth._prompt_api_key",
+                return_value="sk-ant-test",
+            ),
+            patch("terok_executor.credentials.auth.store_api_key") as mock_store,
+        ):
+            authenticate(None, "claude", mounts_dir=tmp_path, image=resolver)
+
+        resolver.assert_not_called()
+        mock_store.assert_called_once_with("claude", "sk-ant-test")
+
+    def test_oauth_choice_resolves_image(self, tmp_path: Path) -> None:
+        """User picks ``1`` (OAuth) → resolver is called exactly once."""
+        from unittest.mock import MagicMock, patch
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="claude",
+            label="Claude",
+            host_dir_name="_claude-config",
+            container_mount="/home/dev/.claude",
+            command=["claude"],
+            banner_hint="",
+            modes=("oauth", "api_key"),
+        )
+        resolver = MagicMock(return_value="terok-l1-cli:ubuntu-24.04")
+        with (
+            patch.dict(
+                "terok_executor.credentials.auth.AUTH_PROVIDERS",
+                {"claude": provider},
+                clear=True,
+            ),
+            patch("builtins.input", return_value="1"),
+            patch("terok_executor.credentials.auth._run_auth_container") as mock_run,
+        ):
+            authenticate(None, "claude", mounts_dir=tmp_path, image=resolver)
+
+        resolver.assert_called_once()
+        # The resolved tag is what reaches _run_auth_container, not the callable.
+        assert mock_run.call_args.kwargs["image"] == "terok-l1-cli:ubuntu-24.04"
+
+    def test_oauth_only_provider_resolves_image(self, tmp_path: Path) -> None:
+        """OAuth-only providers don't show the prompt — image resolves immediately."""
+        from unittest.mock import MagicMock, patch
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="codex",
+            label="Codex",
+            host_dir_name="_codex-config",
+            container_mount="/home/dev/.codex",
+            command=["setup-codex-auth.sh"],
+            banner_hint="",
+            modes=("oauth",),
+        )
+        resolver = MagicMock(return_value="terok-l1-cli:ubuntu-24.04")
+        with (
+            patch.dict(
+                "terok_executor.credentials.auth.AUTH_PROVIDERS",
+                {"codex": provider},
+                clear=True,
+            ),
+            patch("terok_executor.credentials.auth._run_auth_container"),
+        ):
+            authenticate(None, "codex", mounts_dir=tmp_path, image=resolver)
+
+        resolver.assert_called_once()
+
+    def test_api_key_only_provider_ignores_image(self, tmp_path: Path) -> None:
+        """API-key-only providers never resolve the image, even if one is given."""
+        from unittest.mock import MagicMock, patch
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="blablador",
+            label="Blablador",
+            host_dir_name="_blablador-config",
+            container_mount="/home/dev/.blablador",
+            command=[],
+            banner_hint="",
+            modes=("api_key",),
+            api_key_hint="hint",
+        )
+        resolver = MagicMock()
+        with (
+            patch.dict(
+                "terok_executor.credentials.auth.AUTH_PROVIDERS",
+                {"blablador": provider},
+                clear=True,
+            ),
+            patch(
+                "terok_executor.credentials.auth._prompt_api_key",
+                return_value="sk-bbl-test",
+            ),
+            patch("terok_executor.credentials.auth.store_api_key"),
+        ):
+            authenticate(None, "blablador", mounts_dir=tmp_path, image=resolver)
+
+        resolver.assert_not_called()
+
+    def test_eager_string_image_still_works(self, tmp_path: Path) -> None:
+        """Backwards compatibility: a plain string image is accepted and used as-is."""
+        from unittest.mock import patch
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="codex",
+            label="Codex",
+            host_dir_name="_codex-config",
+            container_mount="/home/dev/.codex",
+            command=["setup-codex-auth.sh"],
+            banner_hint="",
+            modes=("oauth",),
+        )
+        with (
+            patch.dict(
+                "terok_executor.credentials.auth.AUTH_PROVIDERS",
+                {"codex": provider},
+                clear=True,
+            ),
+            patch("terok_executor.credentials.auth._run_auth_container") as mock_run,
+        ):
+            authenticate(None, "codex", mounts_dir=tmp_path, image="my-l1:tag")
+
+        assert mock_run.call_args.kwargs["image"] == "my-l1:tag"
+
+    def test_oauth_path_with_no_image_raises(self, tmp_path: Path) -> None:
+        """OAuth path without an image (or callable) is a programming error."""
+        from unittest.mock import patch
+
+        import pytest
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="codex",
+            label="Codex",
+            host_dir_name="_codex-config",
+            container_mount="/home/dev/.codex",
+            command=["setup-codex-auth.sh"],
+            banner_hint="",
+            modes=("oauth",),
+        )
+        with patch.dict(
+            "terok_executor.credentials.auth.AUTH_PROVIDERS",
+            {"codex": provider},
+            clear=True,
+        ):
+            with pytest.raises(ValueError, match="needs an L1 image"):
+                authenticate(None, "codex", mounts_dir=tmp_path, image=None)
