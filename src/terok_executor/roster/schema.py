@@ -332,6 +332,33 @@ class RawMountSpec(StrictModel):
     label: str | None = None
 
 
+# ── Generated routes.json contract ────────────────────────────────────────
+
+
+class VaultRouteEntry(StrictModel):
+    """One entry in the generated ``routes.json`` consumed by the sandbox vault.
+
+    The on-disk file is a top-level ``{provider_name: VaultRouteEntry}`` dict.
+    Empty optional fields (``path_upstreams``, ``oauth_extra_headers``,
+    ``oauth_refresh``) are dropped from the serialized output via
+    ``exclude_none``, keeping the produced file small and diff-friendly.
+    """
+
+    upstream: str = Field(description="Upstream API base URL")
+    auth_header: str = Field(description="HTTP header name for the real credential")
+    auth_prefix: str = Field(description='Prefix prepended to the token (e.g. ``"Bearer "``)')
+    path_upstreams: dict[str, str] | None = Field(
+        default=None, description="Path-prefix → upstream-base overrides"
+    )
+    oauth_extra_headers: dict[str, str] | None = Field(
+        default=None, description="Headers added when forwarding OAuth credentials"
+    )
+    oauth_refresh: dict[str, str] | None = Field(
+        default=None,
+        description="Token-refresh endpoint config (``token_url``, ``client_id``, optional ``scope``)",
+    )
+
+
 # ── Top-level model ───────────────────────────────────────────────────────
 
 
@@ -458,4 +485,5 @@ __all__ = [
     "RawSidecar",
     "RawVault",
     "RawWrapper",
+    "VaultRouteEntry",
 ]

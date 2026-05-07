@@ -36,7 +36,7 @@ from terok_executor._util import yaml_load
 from terok_executor.credentials.auth import AuthProvider
 from terok_executor.provider.providers import AgentProvider
 
-from .schema import RawAgentYaml
+from .schema import RawAgentYaml, VaultRouteEntry
 from .types import HelpSpec, InstallSpec, MountDef, SidecarSpec, VaultRoute
 
 # ---------------------------------------------------------------------------
@@ -224,13 +224,14 @@ class AgentRoster:
     # ── Domain operations ──
 
     def generate_routes_json(self) -> str:
-        """Generate the ``routes.json`` content for the vault server.
+        """Generate the ``routes.json`` content for the sandbox vault server.
 
-        Returns a JSON string mapping route prefixes to upstream config.
+        Returns a JSON object mapping provider name → [`VaultRouteEntry`][terok_executor.roster.schema.VaultRouteEntry]
+        with empty/absent optional fields stripped.
         """
-        import json
+        from pydantic import TypeAdapter
 
-        routes: dict[str, dict[str, object]] = {}
+        routes: dict[str, VaultRouteEntry] = {}
         prefix_owners: dict[str, str] = {}
         for route in self._vault_routes.values():
             existing = prefix_owners.get(route.route_prefix)
@@ -240,19 +241,19 @@ class AgentRoster:
                     f"providers {existing!r} and {route.provider!r}"
                 )
             prefix_owners[route.route_prefix] = route.provider
-            entry: dict[str, object] = {
-                "upstream": route.upstream,
-                "auth_header": route.auth_header,
-                "auth_prefix": route.auth_prefix,
-            }
-            if route.path_upstreams:
-                entry["path_upstreams"] = route.path_upstreams
-            if route.oauth_extra_headers:
-                entry["oauth_extra_headers"] = route.oauth_extra_headers
-            if route.oauth_refresh:
-                entry["oauth_refresh"] = route.oauth_refresh
-            routes[route.provider] = entry
-        return json.dumps(routes, indent=2)
+            routes[route.provider] = VaultRouteEntry(
+                upstream=route.upstream,
+                auth_header=route.auth_header,
+                auth_prefix=route.auth_prefix,
+                path_upstreams=route.path_upstreams or None,
+                oauth_extra_headers=route.oauth_extra_headers or None,
+                oauth_refresh=route.oauth_refresh or None,
+            )
+        return (
+            TypeAdapter(dict[str, VaultRouteEntry])
+            .dump_json(routes, indent=2, exclude_none=True)
+            .decode()
+        )
 
     def collect_all_auto_approve_env(self) -> dict[str, str]:
         """Merge ``auto_approve.env`` from all providers into one dict."""
