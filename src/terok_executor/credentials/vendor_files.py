@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, RootModel, ValidationError
 
@@ -74,17 +74,21 @@ class _VendorFile(BaseModel):
 
 
 class RawClaudeOauthBlock(_VendorFile):
-    """``.credentials.json`` → ``claudeAiOauth`` — Claude OAuth state block."""
+    """``.credentials.json`` → ``claudeAiOauth`` — Claude OAuth state block.
+
+    Typed fields are the ones we actually inspect: ``accessToken`` /
+    ``refreshToken`` go into HTTP headers, ``expiresAt`` drives the refresh
+    timer.  Everything else is pass-through metadata stored in the output
+    credential dict — declared as :data:`typing.Any` to avoid coupling to
+    a vendor-side shape we never look at.
+    """
 
     accessToken: str = ""  # noqa: N815 — vendor uses camelCase
     refreshToken: str = ""  # noqa: N815
     expiresAt: JsTimestamp = None  # noqa: N815
-    # Claude Code emits ``scopes`` as a JSON array of strings.  Older builds
-    # (and the empty-default fallthrough path) used a single string; accept
-    # both rather than constrain the field artificially.
-    scopes: list[str] | str = ""
-    subscriptionType: str | None = None  # noqa: N815
-    rateLimitTier: str | None = None  # noqa: N815
+    scopes: Any = ""
+    subscriptionType: Any = None  # noqa: N815
+    rateLimitTier: Any = None  # noqa: N815
 
 
 class RawClaudeCredentialsFile(_VendorFile):
@@ -101,12 +105,17 @@ class RawClaudeCredentialsFile(_VendorFile):
 
 
 class RawCodexTokensBlock(_VendorFile):
-    """``auth.json`` → ``tokens`` — Codex OAuth token block."""
+    """``auth.json`` → ``tokens`` — Codex OAuth token block.
+
+    ``access_token`` and ``refresh_token`` go into HTTP headers; ``id_token``
+    is parsed as a JWT in the synthetic-auth-file writer.  ``account_id`` is
+    pass-through metadata, declared as :data:`typing.Any`.
+    """
 
     access_token: str = ""
     refresh_token: str = ""
     id_token: str | None = None
-    account_id: str | None = None
+    account_id: Any = None
 
 
 class RawCodexAuthFile(_VendorFile):

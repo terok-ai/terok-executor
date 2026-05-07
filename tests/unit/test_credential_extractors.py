@@ -59,10 +59,11 @@ class TestClaudeOAuth:
         assert result["rate_limit_tier"] == "max_5x"
 
     def test_extracts_with_scopes_as_list(self, tmp_path: Path) -> None:
-        """Real Claude Code emits ``scopes`` as a JSON array — not a string.
+        """Real Claude Code emits ``scopes`` as a JSON array; we pass it through.
 
-        Regression guard for a real auth file shape:
-        ``"scopes": ["user:file_upload", "user:inference", ...]``.
+        Regression guard for a real auth file shape — we don't constrain the
+        type of ``scopes`` (or ``subscriptionType`` / ``rateLimitTier``) since
+        we never inspect them, we just hand them to the vault unchanged.
         """
         cred = {
             "claudeAiOauth": {
