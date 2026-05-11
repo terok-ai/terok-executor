@@ -585,11 +585,23 @@ def stage_scripts(dest: Path) -> None:
     no executor-specific logic; executor still bundles them into the
     container image so the Dockerfile's ``COPY scripts/…`` lines keep
     finding them at their established names.
+
+    Raises [`BuildError`][terok_executor.container.build.BuildError]
+    when ``terok_sandbox`` is not importable — sandbox is a hard
+    dependency in ``pyproject.toml``, but a broken install would
+    otherwise surface as a raw ``ModuleNotFoundError`` traceback.
     """
     if dest.exists():
         shutil.rmtree(dest)
     _copy_package_tree("terok_executor", "resources/scripts", dest)
-    _copy_package_tree("terok_sandbox", "resources/bridges", dest)
+    try:
+        _copy_package_tree("terok_sandbox", "resources/bridges", dest)
+    except ModuleNotFoundError as exc:
+        raise BuildError(
+            "terok_sandbox is not importable — its bridge resources "
+            "(resources/bridges/) could not be staged into the build "
+            "context.  Reinstall terok-executor's dependencies to fix."
+        ) from exc
     _clean_packaging_artifacts(dest)
 
 
