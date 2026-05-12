@@ -3241,8 +3241,8 @@ terok-shield = {url = "https://github.com/terok-ai/terok-shield/releases/downloa
 [package.source]
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
-reference = "feat/credentials-encryption"
-resolved_reference = "254595378f3172b8487dbb72e9d17085a9c32045"
+reference = "7937e5c1dc4737831c4d322c7c17aa685d30d064"
+resolved_reference = "7937e5c1dc4737831c4d322c7c17aa685d30d064"
 
 [[package]]
 name = "terok-shield"
@@ -3660,4 +3660,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "dda4211d70fd3315538bc5c952994442d7f3aba2fcbc6e55466eb9a13b6b4ecc"
+content-hash = "7d20f40c7332b6ddc0023f229e8e02d860314cd4936dcb129cc1201aa479570b"
