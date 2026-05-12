@@ -19,6 +19,7 @@ from terok_executor.container.env import (
     assemble_container_env,
 )
 from terok_executor.roster import get_roster
+from tests.unit.conftest import TEST_VAULT_PASSPHRASE
 
 
 def _find_vol(volumes: tuple[VolumeSpec, ...], container_path: str) -> VolumeSpec | None:
@@ -35,7 +36,7 @@ def _make_vault_db(tmp_path: Path, cred_name: str = "claude", cred_data: dict | 
 
     cfg = SandboxConfig(state_dir=tmp_path, vault_dir=tmp_path / "credentials")
     cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
-    db = CredentialDB(cfg.db_path)
+    db = CredentialDB(cfg.db_path, passphrase=TEST_VAULT_PASSPHRASE)
     db.store_credential(
         "default",
         cred_name,
@@ -52,7 +53,7 @@ def _make_vault_db_with_ssh_keys(tmp_path: Path, scope: str = "myproj"):
 
     cfg = _make_vault_db(tmp_path)
     cfg.vault_dir.mkdir(parents=True, exist_ok=True)
-    db = CredentialDB(cfg.db_path)
+    db = CredentialDB(cfg.db_path, passphrase=TEST_VAULT_PASSPHRASE)
     try:
         kp = generate_keypair("ed25519", comment=f"tk-main:{scope}")
         key_id = db.store_ssh_key(
@@ -664,7 +665,7 @@ class TestVaultTokenInjection:
         cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
         cfg.vault_dir.mkdir(parents=True, exist_ok=True)
         # DB exists with NO provider credentials — only SSH keys.
-        db = CredentialDB(cfg.db_path)
+        db = CredentialDB(cfg.db_path, passphrase=TEST_VAULT_PASSPHRASE)
         try:
             kp = generate_keypair("ed25519", comment="tk-main:sshonly")
             key_id = db.store_ssh_key(

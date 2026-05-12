@@ -141,13 +141,26 @@ def scan_leaked_credentials(mounts_base: Path) -> list[tuple[str, Path]]:
 
 def _format_credentials(status: object) -> str:
     """Format stored credentials as ``name (type), ...`` for status display."""
-    from terok_sandbox import CredentialDB, VaultStatus
+    from terok_sandbox import SandboxConfig, VaultStatus
+    from terok_sandbox.credentials.db import open_credential_db
 
     st: VaultStatus = status  # type: ignore[assignment]
     if not st.credentials_stored:
         return "none stored"
     try:
-        db = CredentialDB(st.db_path)
+        # Open the DB the status reported.  Bypass
+        # ``cfg.open_credential_db`` because it computes
+        # ``vault_dir / "credentials.db"`` from the local config,
+        # which may not match the running daemon's actual ``db_path``
+        # (test fixtures and multi-instance hosts both diverge).
+        # The resolution-chain knobs still come from the local cfg.
+        cfg = SandboxConfig()
+        db = open_credential_db(
+            st.db_path,
+            passphrase_file=cfg.vault_passphrase_file,
+            use_keyring=cfg.credentials_use_keyring,
+            config_fallback=cfg.credentials_passphrase,
+        )
         try:
             parts = []
             for name in st.credentials_stored:
