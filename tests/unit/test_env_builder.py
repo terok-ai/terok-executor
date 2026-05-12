@@ -487,7 +487,10 @@ class TestVaultTokenInjection:
         """DB open failure returns empty env gracefully."""
         with (
             patch("terok_sandbox.is_vault_socket_active", return_value=True),
-            patch("terok_sandbox.CredentialDB", side_effect=OSError("corrupt")),
+            patch(
+                "terok_sandbox.config.SandboxConfig.open_credential_db",
+                side_effect=OSError("corrupt"),
+            ),
         ):
             result = assemble_container_env(base_spec, roster, caller_manages_vault=False)
         assert "ANTHROPIC_API_KEY" not in result.env
@@ -692,11 +695,14 @@ class TestVaultTokenInjection:
         assert "ANTHROPIC_API_KEY" not in result.env
 
     def test_vault_required_hard_fails_on_db_error(self, workspace, envs_dir, roster):
-        """vault_required=True raises SystemExit on CredentialDB construction failure."""
+        """vault_required=True raises SystemExit on credential-DB open failure."""
         spec = _spec(workspace, envs_dir, vault_required=True)
         with (
             patch("terok_sandbox.is_vault_socket_active", return_value=True),
-            patch("terok_sandbox.CredentialDB", side_effect=OSError("corrupt")),
+            patch(
+                "terok_sandbox.config.SandboxConfig.open_credential_db",
+                side_effect=OSError("corrupt"),
+            ),
             pytest.raises(SystemExit, match="DB unavailable.*Check logs"),
         ):
             assemble_container_env(spec, roster, caller_manages_vault=False)

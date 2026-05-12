@@ -67,15 +67,22 @@ def list_authenticated_agents(
     working agents).
     """
     cfg = SandboxConfig()
-    # ``db_path`` is a back-compat override (e.g. tests pointing at a
-    # tmp DB).  When set, dataclass-replace the config so its
-    # ``open_credential_db`` targets the override; the resolution chain
-    # still runs against the rest of the operator's tiers.
-    if db_path is not None:
-        import dataclasses
+    if db_path is None:
+        db = cfg.open_credential_db()
+    else:
+        # ``cfg.db_path`` is computed as ``vault_dir / "credentials.db"``,
+        # so a ``dataclasses.replace`` on ``vault_dir`` alone would lose
+        # an override that uses a different filename (e.g. tests).
+        # Bypass to the lower-level opener that takes an explicit path,
+        # threading the resolution-chain knobs from ``cfg``.
+        from terok_sandbox.credentials.db import open_credential_db
 
-        cfg = dataclasses.replace(cfg, vault_dir=db_path.parent)
-    db = cfg.open_credential_db()
+        db = open_credential_db(
+            db_path,
+            passphrase_file=cfg.vault_passphrase_file,
+            use_keyring=cfg.credentials_use_keyring,
+            config_fallback=cfg.credentials_passphrase,
+        )
     try:
         return list(db.list_credentials(scope))
     finally:
