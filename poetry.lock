@@ -3242,7 +3242,7 @@ terok-shield = {url = "https://github.com/terok-ai/terok-shield/releases/downloa
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
 reference = "feat/plaintext-passphrase-warning"
-resolved_reference = "79445c5543b3d1fa708646fe639b1cb2c470ad45"
+resolved_reference = "fc0d58cf5700b3a814a207484c14f8859bf37e7a"
 
 [[package]]
 name = "terok-shield"
