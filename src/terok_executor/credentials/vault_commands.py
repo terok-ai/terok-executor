@@ -211,6 +211,10 @@ def _handle_status(*, cfg: SandboxConfig | None = None) -> None:
     if not status.running and status.mode == "none" and is_vault_systemd_available():
         print("\nHint: run 'install' to set up systemd socket activation.")
 
+    plaintext_path = getattr(status, "plaintext_passphrase_path", None)
+    if plaintext_path is not None:
+        _print_plaintext_passphrase_warning(plaintext_path)
+
     leaked = scan_leaked_credentials(mounts_dir())
     if leaked:
         print("\nWARNING: Real credentials found in shared config mounts:")
@@ -218,6 +222,26 @@ def _handle_status(*, cfg: SandboxConfig | None = None) -> None:
             print(f"  {provider}: {path}")
         print("These files are mounted into containers alongside vault phantom tokens.")
         print("Run 'clean' to remove them.")
+
+
+def _print_plaintext_passphrase_warning(path: Path) -> None:
+    """Stderr WARNING that the vault passphrase lives in plaintext on disk.
+
+    Mirrors [`terok_sandbox.commands._print_plaintext_passphrase_warning`][terok_sandbox.commands._print_plaintext_passphrase_warning]
+    so ``terok vault status`` (executor-wrapped) and ``terok-sandbox vault status``
+    surface the same operator-actionable warning.  ``getattr`` with a
+    ``None`` default lets the call site work against older
+    ``VaultStatus`` builds that pre-date sandbox#282.
+    """
+    use_color = sys.stderr.isatty()
+    red = "\033[1;31m" if use_color else ""
+    reset = "\033[0m" if use_color else ""
+    print(
+        f"{red}WARNING: vault passphrase stored in plaintext at {path}{reset}\n"
+        f"{red}         accept on-disk plaintext as your trust boundary,"
+        f" or migrate to keyring/systemd-creds.{reset}",
+        file=sys.stderr,
+    )
 
 
 def _handle_install(*, cfg: SandboxConfig | None = None) -> None:

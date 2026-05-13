@@ -398,6 +398,64 @@ class TestVaultCommandHandlers:
         out = capsys.readouterr().out
         assert "vault locked" in out
 
+    @patch("terok_executor.credentials.vault_commands.scan_leaked_credentials", return_value=[])
+    @patch("terok_sandbox.is_vault_systemd_available", return_value=False)
+    @patch("terok_sandbox.get_vault_status")
+    def test_status_surfaces_plaintext_passphrase_warning(
+        self, mock_status, _sd, _scan, capsys
+    ) -> None:
+        """``plaintext_passphrase_path`` lights up a stderr WARNING (sandbox#282)."""
+        from pathlib import Path
+
+        plaintext_path = Path("/etc/terok/config.yml")
+        mock_status.return_value = MagicMock(
+            mode="systemd",
+            running=True,
+            socket_path="/run/proxy.sock",
+            db_path="/data/creds.db",
+            routes_path="/data/routes.json",
+            routes_configured=3,
+            credentials_stored=(),
+            ssh_keys_stored=0,
+            passphrase_source="systemd-creds",
+            locked=False,
+            plaintext_passphrase_path=plaintext_path,
+        )
+        from terok_executor.credentials.vault_commands import _handle_status
+
+        _handle_status()
+        captured = capsys.readouterr()
+        # Warning lives on stderr so structured stdout stays greppable.
+        assert "WARNING" in captured.err
+        assert "plaintext" in captured.err
+        assert str(plaintext_path) in captured.err
+        assert "WARNING" not in captured.out
+
+    @patch("terok_executor.credentials.vault_commands.scan_leaked_credentials", return_value=[])
+    @patch("terok_sandbox.is_vault_systemd_available", return_value=False)
+    @patch("terok_sandbox.get_vault_status")
+    def test_status_silent_when_no_plaintext_warning(self, mock_status, _sd, _scan, capsys) -> None:
+        """Default-None case is silent — no plaintext line at all."""
+        mock_status.return_value = MagicMock(
+            mode="systemd",
+            running=True,
+            socket_path="/run/proxy.sock",
+            db_path="/data/creds.db",
+            routes_path="/data/routes.json",
+            routes_configured=3,
+            credentials_stored=(),
+            ssh_keys_stored=0,
+            passphrase_source="systemd-creds",
+            locked=False,
+            plaintext_passphrase_path=None,
+        )
+        from terok_executor.credentials.vault_commands import _handle_status
+
+        _handle_status()
+        captured = capsys.readouterr()
+        assert "plaintext" not in captured.err
+        assert "plaintext" not in captured.out
+
     @patch("terok_sandbox.install_vault_systemd")
     @patch("terok_executor.credentials.vault_commands._ensure_routes")
     @patch("terok_sandbox.is_vault_systemd_available", return_value=True)
