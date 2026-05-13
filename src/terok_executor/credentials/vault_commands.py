@@ -183,17 +183,26 @@ def _format_credentials(status: object, cfg: SandboxConfig | None = None) -> str
 
 def _handle_status(*, cfg: SandboxConfig | None = None) -> None:
     """Show vault status."""
-    from terok_sandbox import get_vault_status, is_vault_systemd_available
+    from terok_sandbox import get_vault_status, is_vault_systemd_available, sanitize_tty
 
     from terok_executor.paths import mounts_dir
 
     status = get_vault_status(cfg=cfg)
     state = "running" if status.running else "stopped"
-    print(f"Mode:        {status.mode}")
+    # Path fields land in a terminal that interprets ANSI/control chars.
+    # The values originate from the vault daemon's config / live state —
+    # most installs trust those, but a malformed config layer or a
+    # manipulated systemd unit could plant control sequences that would
+    # otherwise spoof prompts or rewrite the screen.  Sanitise at the
+    # render boundary; matches what ``terok-sandbox vault status`` does.
+    print(f"Mode:        {sanitize_tty(status.mode)}")
     print(f"Status:      {state}")
-    print(f"Socket:      {status.socket_path}")
-    print(f"DB:          {status.db_path}")
-    print(f"Routes:      {status.routes_path} ({status.routes_configured} configured)")
+    print(f"Socket:      {sanitize_tty(str(status.socket_path))}")
+    print(f"DB:          {sanitize_tty(str(status.db_path))}")
+    print(
+        f"Routes:      {sanitize_tty(str(status.routes_path))}"
+        f" ({status.routes_configured} configured)"
+    )
     print(f"SSH keys:    {status.ssh_keys_stored}")
     # ``Locked:`` is the operator-facing question — the chain tier
     # ``Passphrase:`` answers WHICH tier resolved it; the explicit
@@ -233,11 +242,14 @@ def _print_plaintext_passphrase_warning(path: Path) -> None:
     ``None`` default lets the call site work against older
     ``VaultStatus`` builds that pre-date sandbox#282.
     """
+    from terok_sandbox import sanitize_tty
+
     use_color = sys.stderr.isatty()
     red = "\033[1;31m" if use_color else ""
     reset = "\033[0m" if use_color else ""
+    safe_path = sanitize_tty(str(path))
     print(
-        f"{red}WARNING: vault passphrase stored in plaintext at {path}{reset}\n"
+        f"{red}WARNING: vault passphrase stored in plaintext at {safe_path}{reset}\n"
         f"{red}         accept on-disk plaintext as your trust boundary,"
         f" or migrate to keyring/systemd-creds.{reset}",
         file=sys.stderr,
