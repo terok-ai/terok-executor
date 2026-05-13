@@ -151,7 +151,6 @@ def _format_credentials(status: object, cfg: SandboxConfig | None = None) -> str
     callers that don't have one handy.
     """
     from terok_sandbox import SandboxConfig as _SandboxConfig, VaultStatus
-    from terok_sandbox.credentials.db import open_credential_db
 
     if cfg is None:
         cfg = _SandboxConfig()
@@ -159,18 +158,12 @@ def _format_credentials(status: object, cfg: SandboxConfig | None = None) -> str
     if not st.credentials_stored:
         return "none stored"
     try:
-        # Bypass ``cfg.open_credential_db`` because it computes
-        # ``vault_dir / "credentials.db"`` from the local config,
-        # which may not match the running daemon's actual ``db_path``
-        # (test fixtures and multi-instance hosts both diverge).
-        # The resolution-chain knobs still come from *cfg*.
-        db = open_credential_db(
-            st.db_path,
-            passphrase_file=cfg.vault_passphrase_file,
-            systemd_creds_file=cfg.vault_systemd_creds_file,
-            use_keyring=cfg.credentials_use_keyring,
-            config_fallback=cfg.credentials_passphrase,
-        )
+        # ``st.db_path`` is the running daemon's actual DB — may diverge
+        # from ``cfg.db_path`` under test fixtures or multi-instance
+        # hosts.  Pass it explicitly; *cfg* still owns the tier policy
+        # so this caller never has to know about session-file /
+        # systemd-creds / keyring / config.
+        db = cfg.open_credential_db(st.db_path)
         try:
             parts = []
             for name in st.credentials_stored:

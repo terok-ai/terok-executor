@@ -32,7 +32,7 @@ documentation = "https://terok-ai.github.io/terok-executor/"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.15"
-terok-sandbox = {git = "https://github.com/sliwowitz/terok-sandbox.git", branch = "feat/plaintext-passphrase-warning"}
+terok-sandbox = {git = "https://github.com/sliwowitz/terok-sandbox.git", branch = "feat/vault-log-improvements"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
