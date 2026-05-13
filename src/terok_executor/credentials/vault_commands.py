@@ -11,6 +11,7 @@ generation from the YAML roster is performed before ``start`` and
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -290,29 +291,56 @@ def _handle_clean(*, cfg: SandboxConfig | None = None) -> None:  # noqa: ARG001
         print(f"Removed {provider}: {path}")
 
 
-VAULT_COMMANDS: tuple[CommandDef, ...] = (
-    CommandDef(name="start", help="Start the vault daemon", handler=_handle_start, group="vault"),
-    CommandDef(name="stop", help="Stop the vault daemon", handler=_handle_stop, group="vault"),
-    CommandDef(name="status", help="Show vault status", handler=_handle_status, group="vault"),
-    CommandDef(
-        name="install",
-        help="Install systemd socket activation",
-        handler=_handle_install,
-        group="vault",
-    ),
-    CommandDef(
-        name="uninstall", help="Remove systemd units", handler=_handle_uninstall, group="vault"
-    ),
-    CommandDef(
-        name="routes",
-        help="Regenerate routes.json from YAML roster",
-        handler=_handle_routes,
-        group="vault",
-    ),
-    CommandDef(
-        name="clean",
-        help="Remove leaked credential files from shared mounts",
-        handler=_handle_clean,
-        group="vault",
-    ),
-)
+#: Verbs where executor enriches the sandbox handler (leaked-credential
+#: scans, ``_ensure_routes`` before installs, typed credential listings,
+#: ``SystemExit`` on already-running).  Anything not in this map passes
+#: through from sandbox unchanged — that's how ``unlock`` / ``lock`` /
+#: ``seal`` reach ``terok vault`` without an executor-side handler.
+_HANDLER_OVERRIDES: dict[str, Callable[..., None]] = {
+    "start": _handle_start,
+    "stop": _handle_stop,
+    "status": _handle_status,
+    "install": _handle_install,
+    "uninstall": _handle_uninstall,
+}
+
+
+def _build_vault_commands() -> tuple[CommandDef, ...]:
+    """Compose ``VAULT_COMMANDS`` as an overlay over sandbox's tuple.
+
+    Sandbox owns the verb set + argparse schema (one source of truth
+    for ``--forget``, ``--key=``, help text, etc.).  Executor overlays
+    its enriched handlers for the five shared verbs and appends the
+    two executor-only verbs (``routes`` / ``clean``).  The three
+    sandbox-only verbs (``unlock`` / ``lock`` / ``seal``) flow through
+    so they surface under ``terok vault`` instead of only under
+    ``terok-sandbox vault``.
+    """
+    from dataclasses import replace
+
+    from terok_sandbox import VAULT_COMMANDS as _SANDBOX_VAULT_COMMANDS
+
+    overlaid = tuple(
+        replace(cmd, handler=_HANDLER_OVERRIDES[cmd.name])
+        if cmd.name in _HANDLER_OVERRIDES
+        else cmd
+        for cmd in _SANDBOX_VAULT_COMMANDS
+    )
+    executor_only = (
+        CommandDef(
+            name="routes",
+            help="Regenerate routes.json from YAML roster",
+            handler=_handle_routes,
+            group="vault",
+        ),
+        CommandDef(
+            name="clean",
+            help="Remove leaked credential files from shared mounts",
+            handler=_handle_clean,
+            group="vault",
+        ),
+    )
+    return overlaid + executor_only
+
+
+VAULT_COMMANDS: tuple[CommandDef, ...] = _build_vault_commands()
