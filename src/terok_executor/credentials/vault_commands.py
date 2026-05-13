@@ -167,6 +167,7 @@ def _format_credentials(status: object, cfg: SandboxConfig | None = None) -> str
         db = open_credential_db(
             st.db_path,
             passphrase_file=cfg.vault_passphrase_file,
+            systemd_creds_file=cfg.vault_systemd_creds_file,
             use_keyring=cfg.credentials_use_keyring,
             config_fallback=cfg.credentials_passphrase,
         )
@@ -201,8 +202,13 @@ def _handle_status(*, cfg: SandboxConfig | None = None) -> None:
     print(f"DB:          {status.db_path}")
     print(f"Routes:      {status.routes_path} ({status.routes_configured} configured)")
     print(f"SSH keys:    {status.ssh_keys_stored}")
+    # ``Locked:`` is the operator-facing question — the chain tier
+    # ``Passphrase:`` answers WHICH tier resolved it; the explicit
+    # ``Locked:`` line answers WHETHER it resolved at all so a
+    # ``grep '^Locked:'`` is enough for scripts.
+    print(f"Locked:      {'yes' if status.locked else 'no'}")
     if status.locked:
-        print("Passphrase:  (vault locked — no tier resolved)")
+        print("Passphrase:  (no tier resolved — run `terok vault unlock`)")
     elif status.passphrase_source is not None:
         print(f"Passphrase:  resolved via {status.passphrase_source}")
     if status.credentials_stored:

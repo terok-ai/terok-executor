@@ -379,7 +379,7 @@ class TestVaultCommandHandlers:
     @patch("terok_sandbox.is_vault_systemd_available", return_value=False)
     @patch("terok_sandbox.get_vault_status")
     def test_status_announces_locked_vault(self, mock_status, _sd, _scan, capsys) -> None:
-        """A locked vault prints an actionable hint instead of an empty source."""
+        """A locked vault prints the explicit ``Locked: yes`` line and the unlock hint."""
         mock_status.return_value = MagicMock(
             mode="daemon",
             running=True,
@@ -396,7 +396,32 @@ class TestVaultCommandHandlers:
 
         _handle_status()
         out = capsys.readouterr().out
-        assert "vault locked" in out
+        assert "Locked:      yes" in out
+        assert "vault unlock" in out
+
+    @patch("terok_executor.credentials.vault_commands.scan_leaked_credentials", return_value=[])
+    @patch("terok_sandbox.is_vault_systemd_available", return_value=False)
+    @patch("terok_sandbox.get_vault_status")
+    def test_status_marks_unlocked_explicitly(self, mock_status, _sd, _scan, capsys) -> None:
+        """A resolved vault prints ``Locked: no`` alongside the chain-tier source."""
+        mock_status.return_value = MagicMock(
+            mode="systemd",
+            running=True,
+            socket_path="/run/proxy.sock",
+            db_path="/data/creds.db",
+            routes_path="/data/routes.json",
+            routes_configured=3,
+            credentials_stored=(),
+            ssh_keys_stored=0,
+            passphrase_source="systemd-creds",
+            locked=False,
+        )
+        from terok_executor.credentials.vault_commands import _handle_status
+
+        _handle_status()
+        out = capsys.readouterr().out
+        assert "Locked:      no" in out
+        assert "resolved via systemd-creds" in out
 
     @patch("terok_executor.credentials.vault_commands.scan_leaked_credentials", return_value=[])
     @patch("terok_sandbox.is_vault_systemd_available", return_value=False)
