@@ -3222,9 +3222,8 @@ description = "Hardened Podman container runner with gate server and shield inte
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = [
-    {file = "terok_sandbox-0.0.119-py3-none-any.whl", hash = "sha256:bd24b7bf51398f752833bf3e2e9dc1ed2550c1be396013f83970321ee0f1de76"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 aiohttp = ">=3.9"
@@ -3236,12 +3235,14 @@ prompt-toolkit = ">=3.0"
 pydantic = ">=2.9"
 "ruamel.yaml" = ">=0.18"
 sqlcipher3 = ">=0.6.2"
-terok_clearance = {url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.6.11/terok_clearance-0.6.11-py3-none-any.whl"}
-terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.6.39/terok_shield-0.6.39-py3-none-any.whl"}
+terok-clearance = {url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.6.11/terok_clearance-0.6.11-py3-none-any.whl"}
+terok-shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.6.39/terok_shield-0.6.39-py3-none-any.whl"}
 
 [package.source]
-type = "url"
-url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.119/terok_sandbox-0.0.119-py3-none-any.whl"
+type = "git"
+url = "https://github.com/sliwowitz/terok-sandbox.git"
+reference = "refactor/drop-back-compat-shims"
+resolved_reference = "13b0c13c99570dfe5f2f14ee995f716eaeb048b4"
 
 [[package]]
 name = "terok-shield"
@@ -3659,4 +3660,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "193c81b4b71c5f34c4dc0dcf1b2da769f25f3d096f637e5fd5b50c9d81555ceb"
+content-hash = "961e6e246bbe8f4f1d7366ee4909997955dab476df423e47a22b6085ec94582f"
