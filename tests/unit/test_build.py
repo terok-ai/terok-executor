@@ -634,13 +634,44 @@ class TestTemplateRendering:
     def test_l0_ships_no_systemd_units_or_systemctl_calls(self) -> None:
         """No systemd as PID 1 in the container, so systemd units and
         ``systemctl`` calls would be dead weight — they would never run.
-        Sshd is started directly from ``init-ssh-and-repo.sh`` instead."""
+        Sshd is started directly from ``init-ssh-and-repo.sh`` instead.
+
+        Both the rpm vendor unit path (``/usr/lib/systemd/system``) and
+        the deb-conventional one (``/lib/systemd/system``) are checked
+        — a regression that re-introduces a unit file under either
+        location fails here."""
         deb = render_l0("ubuntu:24.04", family="deb")
         rpm = render_l0("fedora:44", family="rpm")
         for content in (deb, rpm):
             assert "systemctl" not in content
             assert "sshd-terok.service" not in content
             assert "/usr/lib/systemd/system" not in content
+            assert "/lib/systemd/system" not in content
+
+    def test_init_script_carries_krun_sshd_supervisor(self) -> None:
+        """``init-ssh-and-repo.sh`` is what actually starts sshd under krun
+        (no systemd to do it).  Pin the three load-bearing tokens so a
+        regression that silently strips the launch is caught at build time
+        rather than at the next failed ``terok login``:
+
+        - ``TEROK_CONTAINER_RUNTIME`` — the explicit gate (set by terok
+          only under krun; absent under crun ⇒ no sshd)
+        - ``/usr/sbin/sshd`` — the actual binary invocation
+        - ``setsid`` — the supervisor loop runs in a detached session so
+          the outer init shell exiting can't take it down
+        """
+        script_path = (
+            Path(__file__).resolve().parent.parent.parent
+            / "src"
+            / "terok_executor"
+            / "resources"
+            / "scripts"
+            / "init-ssh-and-repo.sh"
+        )
+        text = script_path.read_text()
+        assert "TEROK_CONTAINER_RUNTIME" in text
+        assert "/usr/sbin/sshd" in text
+        assert "setsid" in text
 
     def test_l0_hardens_sshd_to_pubkey_only_dev_only_no_forwarding(self) -> None:
         """The sshd config drop-in collapses the surface to a single
