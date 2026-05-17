@@ -601,17 +601,18 @@ class TestTemplateRendering:
         assert "FROM" in content
         assert "coderabbit" not in content.lower()
 
-    # ─ Unified L0 — sshd structurally off unless host pubkey is bind-mounted ─
+    # ─ Unified L0 — rootless sshd, gated by TEROK_CONTAINER_RUNTIME ─
     #
     # The L0 image carries sshd infrastructure (openssh-server, hardened
-    # sshd config drop-in, empty placeholder authorized_keys file,
-    # pre-generated host keys).  Under crun the placeholder is empty
-    # and ``init-ssh-and-repo.sh``'s ``[[ -s ... ]]`` test is false, so
-    # sshd never starts.  Under krun terok bind-mounts the live host
-    # pubkey over the placeholder ⇒ test is true ⇒ the script launches
-    # sshd on TCP 22 and podman has forwarded a per-task host port to
-    # it through crun-krun's passt.  These tests pin the directives
-    # sandbox/terok rely on at launch time.
+    # per-user sshd config under /home/dev/.config/sshd/, per-user host
+    # keys under /home/dev/.ssh/sshd_host/, empty placeholder
+    # authorized_keys file).  ``init-ssh-and-repo.sh`` checks the
+    # ``TEROK_CONTAINER_RUNTIME=krun`` env var (set by terok only under
+    # krun) to decide whether to start sshd; under crun the env var
+    # is absent and sshd never starts.  Under krun sshd runs as ``dev``
+    # on port 2222 — libkrun's virtiofs is ``nosuid`` so sudo can't
+    # elevate, and uid 1000 can't bind privileged ports.  These tests
+    # pin the directives sandbox/terok rely on at launch time.
 
     def test_l0_installs_openssh_server_under_both_families(self) -> None:
         """``openssh-server`` ships in the package list on deb and rpm alike."""
@@ -620,16 +621,24 @@ class TestTemplateRendering:
         assert "openssh-server" in deb
         assert "openssh-server" in rpm
 
-    def test_l0_pregenerates_host_keys(self) -> None:
-        """``ssh-keygen -A`` at build time so ``sshd`` has host keys to read
-        when the init script launches it.
-
-        Identical host keys across containers built from the same L0 are
-        acceptable: the client side uses ``StrictHostKeyChecking=no`` +
-        ``UserKnownHostsFile=/dev/null``, and the per-task host port is
-        loopback-only (experimental-runtime tradeoff)."""
+    def test_l0_generates_per_user_host_key_owned_by_dev(self) -> None:
+        """sshd runs as dev (no sudo under krun's nosuid virtiofs), so the
+        host key must live in dev's home and be readable by dev — not the
+        package's default /etc/ssh/ssh_host_*_key, which is mode 0600 root."""
         content = render_l0("ubuntu:24.04", family="deb")
-        assert "ssh-keygen -A" in content
+        assert "/home/dev/.ssh/sshd_host" in content
+        assert "ssh-keygen" in content and "ed25519" in content
+        # And not the root-owned ssh-keygen -A path (which would write to /etc/ssh).
+        assert "ssh-keygen -A" not in content
+
+    def test_l0_ships_per_user_sshd_config_with_unprivileged_port(self) -> None:
+        """The per-user config sets ``Port 2222`` (unprivileged so uid 1000
+        can bind without ``CAP_NET_BIND_SERVICE``) and points sshd at the
+        per-user host key.  Lives under /home/dev/ so dev owns + can read it."""
+        content = render_l0("ubuntu:24.04", family="deb")
+        assert "/home/dev/.config/sshd/config" in content
+        assert "Port 2222" in content
+        assert "HostKey /home/dev/.ssh/sshd_host/" in content
 
     def test_l0_ships_no_systemd_units_or_systemctl_calls(self) -> None:
         """No systemd as PID 1 in the container, so systemd units and
@@ -650,7 +659,7 @@ class TestTemplateRendering:
 
     def test_init_script_carries_krun_sshd_supervisor(self) -> None:
         """``init-ssh-and-repo.sh`` is what actually starts sshd under krun
-        (no systemd to do it).  Pin the three load-bearing tokens so a
+        (no systemd to do it).  Pin the four load-bearing tokens so a
         regression that silently strips the launch is caught at build time
         rather than at the next failed ``terok login``:
 
@@ -659,6 +668,8 @@ class TestTemplateRendering:
         - ``/usr/sbin/sshd`` — the actual binary invocation
         - ``setsid`` — the supervisor loop runs in a detached session so
           the outer init shell exiting can't take it down
+        - **no** ``sudo`` — under libkrun's nosuid virtiofs sudo can't
+          elevate (the whole point of the rootless redesign)
         """
         script_path = (
             Path(__file__).resolve().parent.parent.parent
@@ -672,6 +683,14 @@ class TestTemplateRendering:
         assert "TEROK_CONTAINER_RUNTIME" in text
         assert "/usr/sbin/sshd" in text
         assert "setsid" in text
+        # Extract just the krun-gate block so unrelated future sudo uses
+        # elsewhere in the script don't false-positive this guard.
+        block_start = text.find('"${TEROK_CONTAINER_RUNTIME:-}" == "krun"')
+        assert block_start >= 0, "krun gate disappeared"
+        block_end = text.find("\nfi\n", block_start)
+        assert "sudo" not in text[block_start:block_end], (
+            "sudo crept back into the krun sshd block — won't work on nosuid virtiofs"
+        )
 
     def test_l0_hardens_sshd_to_pubkey_only_dev_only_no_forwarding(self) -> None:
         """The sshd config drop-in collapses the surface to a single
@@ -694,9 +713,9 @@ class TestTemplateRendering:
 
     def test_l0_ships_empty_authorized_keys_placeholder(self) -> None:
         """The trust file ships **empty** — the live host pubkey is
-        bind-mounted in at task launch by terok.  An empty file is also
-        the off-switch: ``init-ssh-and-repo.sh``'s ``[[ -s ... ]]`` test
-        is false ⇒ sshd never launches ⇒ port 22 has no listener."""
+        bind-mounted in at task launch by terok.  Mode 0644 so the
+        unprivileged ``dev`` user can read it through the bind-mount
+        when sshd authenticates an incoming session."""
         content = render_l0("ubuntu:24.04", family="deb")
         assert ": > /etc/ssh/authorized_keys.d/terok" in content
         # And the L0 build path carries no ``KRUN_HOST_PUBKEY`` build arg.

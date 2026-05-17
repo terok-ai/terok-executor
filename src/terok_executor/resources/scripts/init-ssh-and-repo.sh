@@ -22,9 +22,10 @@ set -euo pipefail
 : "${HOME:=/home/dev}"
 
 # Under krun ``podman exec`` can't enter the guest, so we ship an
-# sshd inside the image and reach it via the per-task ``-p HOST:22``
-# forward.  Done first so ``terok login`` can attach even if the rest
-# of init fails (DNS-inside-guest is a separate follow-up).
+# sshd inside the image and reach it via the per-task
+# ``-p HOST:2222`` forward.  Done first so ``terok login`` can attach
+# even if the rest of init fails (DNS-inside-guest is a separate
+# follow-up).
 #
 # The gate is ``TEROK_CONTAINER_RUNTIME=krun`` — set by terok's
 # ``_project_runtime_flags`` only when launching under krun.  An
@@ -32,17 +33,23 @@ set -euo pipefail
 # so a botched L0 with a non-empty placeholder can't accidentally
 # expose sshd under crun.
 #
+# Sshd runs as the unprivileged ``dev`` user (no sudo): libkrun mounts
+# the guest rootfs via virtiofs with ``nosuid``, so ``sudo`` can't
+# elevate even where the sudoers config would allow it (exec'ing
+# /usr/bin/sudo fails with EACCES on libkrun 1.17).  The per-user
+# config + host key the L0 ships under ``$HOME/.config/sshd/`` +
+# ``$HOME/.ssh/sshd_host/`` let sshd start without root; port 2222
+# avoids the privileged-port bind that would need ``CAP_NET_BIND_SERVICE``
+# the keep-id user namespace doesn't carry to uid 1000.
+#
 # The supervisor loop restarts sshd if it crashes (panic, OOM, etc.);
 # ``setsid`` puts the loop in its own session so SIGHUP from the outer
-# init shell (which exits after ``exec bash`` below) can't take it
-# down.  ``/run/sshd`` is sshd's privsep chroot — package-created on
-# rpm but not always on deb, so we mkdir defensively.
+# init shell (which exits after ``exec bash`` below) can't take it down.
 if [[ "${TEROK_CONTAINER_RUNTIME:-}" == "krun" ]]; then
-  echo ">> starting sshd supervisor on TCP 22 (krun mode)"
-  sudo mkdir -p /run/sshd
-  sudo setsid bash -c '
+  echo ">> starting sshd supervisor on TCP 2222 (krun mode)"
+  setsid bash -c '
     while :; do
-      /usr/sbin/sshd -D -e
+      /usr/sbin/sshd -D -e -f "$HOME/.config/sshd/config"
       echo "[sshd-supervisor] sshd exited (code $?); restarting in 1s" >&2
       sleep 1
     done

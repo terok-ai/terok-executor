@@ -3,20 +3,23 @@
 # L0 — base dev image shared by every terok project.
 #
 # Identical image content under both supported OCI runtimes (``crun``
-# and ``krun``).  The single switch between "no sshd" and "sshd on
-# TCP 22" is a ``[[ -s /etc/ssh/authorized_keys.d/terok ]]`` check at
-# the top of ``init-ssh-and-repo.sh``: under crun the placeholder file
-# ships empty so the check is false and sshd never starts; under krun
-# terok bind-mounts the live host pubkey over the placeholder so the
-# file is non-empty and the script launches sshd on TCP 22, reachable
-# from the host via the per-task port that podman's passt has
-# forwarded into the guest namespace (``ssh -p <host_port>
-# dev@127.0.0.1``).
+# and ``krun``).  Under krun, ``init-ssh-and-repo.sh`` launches a
+# rootless sshd on TCP 2222 (gated by ``TEROK_CONTAINER_RUNTIME=krun``
+# from terok), reachable from the host via the per-task port that
+# podman's passt has forwarded into the guest namespace
+# (``ssh -p <host_port> dev@127.0.0.1``).  Under crun the gate is
+# false and sshd never starts — ``podman exec`` does the talking
+# instead.
 #
-# No systemd as PID 1 — the container CMD is bash + the init script —
-# so the launch is a plain ``sudo /usr/sbin/sshd -e`` (sshd
-# self-daemonises), gated by the same one-line file test the systemd
-# unit used to express.
+# Rootless sshd because libkrun mounts the guest rootfs via virtiofs
+# with ``nosuid``, so ``sudo`` can't elevate (exec'ing setuid /usr/bin/sudo
+# fails with EACCES, observed on libkrun 1.17).  Sshd therefore runs as
+# the ``dev`` user, with per-user host keys + config under
+# ``/home/dev/.ssh/sshd_host/`` and ``/home/dev/.config/sshd/`` that
+# the user can actually read and write.  Port 2222 because uid 1000
+# can't bind < 1024 without ``CAP_NET_BIND_SERVICE``, which the keep-id
+# user namespace doesn't carry; the host-side ``-p`` mapping hides this
+# from the operator.
 
 ARG BASE_IMAGE={{ BASE_IMAGE }}
 FROM ${BASE_IMAGE}
@@ -92,24 +95,36 @@ RUN set -eux; \
     chmod 700 /home/dev/.ssh; \
     chmod 0777 /workspace
 
-# ── sshd-on-TCP-22: structurally off unless authorized_keys is populated ───
+# ── sshd-on-TCP-2222 (rootless): config + host keys owned by dev ──────────
 #
 # Pubkey-only sshd hardened down to the single ``dev`` account, no
-# forwarding of any kind.  The trust file at
-# ``/etc/ssh/authorized_keys.d/terok`` ships **empty** — the live host
-# pubkey is bind-mounted in at task launch by terok, so the L0 image
-# never carries a per-installation secret.
+# forwarding of any kind.  Lives under ``/home/dev/`` so the unprivileged
+# ``dev`` user can read every file at launch — under krun there is no
+# sudo to escalate.
 #
-# Host keys are pre-generated at build time (``ssh-keygen -A``) so
-# ``sshd`` has keys to read when ``init-ssh-and-repo.sh`` launches it
-# under krun.  The shared keys across containers built from one L0 are
+# Trust file at ``/etc/ssh/authorized_keys.d/terok`` ships **empty** —
+# the live host pubkey is bind-mounted in at task launch by terok, so
+# the L0 image never carries a per-installation secret.  Mode 0644 so
+# dev can read it through the bind-mount.
+#
+# Host key is generated at build time (under ``dev``, ed25519, no
+# passphrase) into ``/home/dev/.ssh/sshd_host/`` so dev can read it at
+# launch.  Shared host keys across containers built from one L0 are
 # acceptable: clients use ``StrictHostKeyChecking=no`` +
 # ``UserKnownHostsFile=/dev/null``, and the per-task host port is
 # loopback-bound (experimental-runtime tradeoff).
-RUN install -d -m 0755 /etc/ssh/sshd_config.d \
-    && install -d -m 0755 /etc/ssh/authorized_keys.d \
+RUN install -d -m 0755 /etc/ssh/authorized_keys.d \
+    && : > /etc/ssh/authorized_keys.d/terok \
+    && chmod 0644 /etc/ssh/authorized_keys.d/terok \
+    && install -d -m 0700 -o dev -g dev /home/dev/.ssh/sshd_host \
+    && install -d -m 0700 -o dev -g dev /home/dev/.config/sshd \
+    && su -s /bin/sh dev -c \
+        "ssh-keygen -q -t ed25519 -N '' -C '' -f /home/dev/.ssh/sshd_host/ssh_host_ed25519_key" \
     && printf '%s\n' \
-        '# terok sshd hardening — pubkey-only, single account.' \
+        '# terok sshd — rootless, pubkey-only, single account.' \
+        'Port 2222' \
+        'HostKey /home/dev/.ssh/sshd_host/ssh_host_ed25519_key' \
+        'PidFile /tmp/sshd-terok.pid' \
         'PermitRootLogin no' \
         'PasswordAuthentication no' \
         'PermitEmptyPasswords no' \
@@ -121,11 +136,11 @@ RUN install -d -m 0755 /etc/ssh/sshd_config.d \
         'X11Forwarding no' \
         'PermitTunnel no' \
         'GatewayPorts no' \
+        'UsePAM no' \
         'AuthorizedKeysFile /etc/ssh/authorized_keys.d/terok' \
-        > /etc/ssh/sshd_config.d/00-terok.conf \
-    && : > /etc/ssh/authorized_keys.d/terok \
-    && chmod 0644 /etc/ssh/authorized_keys.d/terok \
-    && ssh-keygen -A
+        > /home/dev/.config/sshd/config \
+    && chown dev:dev /home/dev/.config/sshd/config \
+    && chmod 0600 /home/dev/.config/sshd/config
 
 WORKDIR /workspace
 
