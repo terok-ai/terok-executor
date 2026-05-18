@@ -158,6 +158,40 @@ def make_krun_runtime(*, cfg: SandboxConfig | None = None) -> KrunRuntime:
     return KrunRuntime(transport=transport, podman=PodmanRuntime())
 
 
+def krun_launch_args(*, cfg: SandboxConfig | None = None) -> list[str]:
+    """Extra ``podman run`` args terok must splice in for a krun launch.
+
+    Three things that all reach across the orchestrator/runtime boundary
+    into executor's domain — the L0 image, the host keypair, and the
+    in-guest ``init-ssh-and-repo.sh`` — so they live here together
+    rather than being open-coded in terok's ``_project_runtime_flags``:
+
+    - Bind-mount the live host pubkey over the L0's empty placeholder
+      at ``/etc/ssh/authorized_keys.d/terok``.  ``z`` is the shared
+      SELinux relabel (never ``Z`` — the host pubkey is host-wide and
+      concurrent containers share the source).
+    - Set ``TEROK_CONTAINER_RUNTIME=krun`` so the init script's krun
+      gate fires.
+    - Override the L0's ``USER dev`` directive with ``--user root`` so
+      the in-guest sshd can start, listen on TCP 22, and drop to the
+      authenticated user on connection.  ``USER dev`` is the right
+      default under crun (AI agents that refuse uid 0); under krun the
+      session uid comes from which ``ssh user@…`` the operator picks.
+
+    Doesn't include ``--runtime krun`` itself or krun's microVM-sizing
+    annotations — those are orchestrator-level decisions terok keeps.
+    """
+    kp = ensure_krun_host_keypair(cfg=cfg)
+    return [
+        "-v",
+        f"{kp.public_path}:/etc/ssh/authorized_keys.d/terok:ro,z",
+        "-e",
+        "TEROK_CONTAINER_RUNTIME=krun",
+        "--user",
+        "root",
+    ]
+
+
 # ── Private helpers ─────────────────────────────────────────────────────────
 
 
