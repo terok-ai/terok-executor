@@ -165,3 +165,54 @@ class TestProbeAgentModels:
                     timeout=0.2,
                 )
             )
+
+
+class TestProbeClient:
+    """``_ProbeClient`` swallows informational frames and fast-fails real requests."""
+
+    def test_session_update_swallowed(self) -> None:
+        """A chatty wrapper's progress notifications are ignored, not raised."""
+        from terok_executor.acp.probe import _ProbeClient
+
+        asyncio.run(_ProbeClient().session_update(session_id="s", update=None))
+
+    def test_ext_notification_swallowed(self) -> None:
+        """Extension notifications during the probe are dropped silently."""
+        from terok_executor.acp.probe import _ProbeClient
+
+        asyncio.run(_ProbeClient().ext_notification("evt", {}))
+
+    def test_on_connect_is_noop(self) -> None:
+        """``on_connect`` is a protocol hook the probe doesn't use."""
+        from terok_executor.acp.probe import _ProbeClient
+
+        _ProbeClient().on_connect(object())
+
+    @pytest.mark.parametrize(
+        "method,args",
+        [
+            ("request_permission", {}),
+            ("read_text_file", {}),
+            ("write_text_file", {}),
+            ("create_terminal", {}),
+            ("terminal_output", {}),
+            ("release_terminal", {}),
+            ("wait_for_terminal_exit", {}),
+            ("kill_terminal", {}),
+            ("ext_method", {"_name": "x", "_payload": {}}),
+        ],
+    )
+    def test_backend_initiated_request_fast_fails(self, method: str, args: dict[str, Any]) -> None:
+        """Any backend-initiated request raises ``method_not_found``.
+
+        Probes should not service requests the proxy would normally
+        forward to the connected client; failing fast surfaces the
+        misbehaving wrapper instead of letting the handshake hang.
+        """
+        from acp import RequestError
+
+        from terok_executor.acp.probe import _ProbeClient
+
+        with pytest.raises(RequestError) as exc:
+            asyncio.run(getattr(_ProbeClient(), method)(**args))
+        assert exc.value.code == -32601  # method_not_found

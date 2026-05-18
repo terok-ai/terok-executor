@@ -115,6 +115,39 @@ class _FakeBackend:
             ]
         )
 
+    # ── Forward-only Agent methods (used by post-bind forwarding tests) ──
+
+    async def authenticate(self, **kw: Any) -> None:
+        self.calls.append(("authenticate", kw))
+        return None
+
+    async def set_session_mode(self, **kw: Any) -> None:
+        self.calls.append(("set_session_mode", kw))
+        return None
+
+    async def load_session(self, **kw: Any) -> None:
+        self.calls.append(("load_session", kw))
+        return None
+
+    async def list_sessions(self, **kw: Any) -> Any:
+        self.calls.append(("list_sessions", kw))
+        return None
+
+    async def fork_session(self, **kw: Any) -> Any:
+        self.calls.append(("fork_session", kw))
+        return None
+
+    async def resume_session(self, **kw: Any) -> Any:
+        self.calls.append(("resume_session", kw))
+        return None
+
+    async def ext_method(self, name: str, params: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append(("ext_method", {"method": name, "params": params}))
+        return {"ok": True}
+
+    async def ext_notification(self, name: str, params: dict[str, Any]) -> None:
+        self.calls.append(("ext_notification", {"method": name, "params": params}))
+
 
 def _patch_spawn(monkeypatch: pytest.MonkeyPatch, backend: _FakeBackend) -> None:
     """Install *backend* as the next ``spawn_agent_process`` result."""
@@ -415,6 +448,54 @@ class TestBackendForwarding:
         assert model_opt.current_value == "claude:opus-4.6"
         assert [e.value for e in model_opt.options] == ["claude:opus-4.6"]
 
+    def test_close_session_with_no_backend_is_noop(self) -> None:
+        """``close_session`` before any bind returns ``None`` without erroring."""
+        proxy = _new_proxy(["claude:opus-4.6"])
+        asyncio.run(proxy.new_session(cwd="/x", mcp_servers=[]))
+        result = asyncio.run(proxy.close_session(session_id=CLIENT_SESSION_ID))
+        assert result is None
+
+    def test_set_config_option_model_binds_and_returns_aggregated_option(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Older Zed's model selection (``configId="model"``) binds and returns the aggregate."""
+        backend = _FakeBackend()
+        _patch_spawn(monkeypatch, backend)
+        proxy = _new_proxy(["claude:opus-4.6", "claude:haiku-4.5"])
+
+        async def _drive() -> SetSessionConfigOptionResponse | None:
+            await proxy.initialize(protocol_version=1)
+            await proxy.new_session(cwd="/x", mcp_servers=[])
+            return await proxy.set_config_option(
+                config_id="model",
+                session_id=CLIENT_SESSION_ID,
+                value="claude:haiku-4.5",
+            )
+
+        resp = asyncio.run(_drive())
+        assert resp is not None
+        opt = resp.config_options[0]
+        assert isinstance(opt, SessionConfigOptionSelect)
+        assert opt.current_value == "claude:haiku-4.5"
+        assert [e.value for e in opt.options] == ["claude:opus-4.6", "claude:haiku-4.5"]
+
+    def test_prompt_lazy_binds_to_default_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A client that skips ``set_session_model`` binds lazily on first ``prompt``."""
+        backend = _FakeBackend()
+        _patch_spawn(monkeypatch, backend)
+        proxy = _new_proxy(["claude:opus-4.6"])
+
+        async def _drive() -> None:
+            await proxy.initialize(protocol_version=1)
+            await proxy.new_session(cwd="/x", mcp_servers=[])
+            await proxy.prompt(prompt=[], session_id=CLIENT_SESSION_ID)
+
+        asyncio.run(_drive())
+        method_order = [name for name, _ in backend.calls]
+        assert method_order == ["initialize", "new_session", "set_session_model", "prompt"]
+        set_model_call = backend.calls[2][1]
+        assert set_model_call["model_id"] == "opus-4.6"
+
     def test_close_session_tears_backend_down(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``close_session`` reaps the wrapper; the proxy can rebind afterwards."""
         backend = _FakeBackend()
@@ -497,6 +578,37 @@ class TestNamespaceModelOptionsInPlace:
         namespace_model_options_in_place(None, "claude")
         namespace_model_options_in_place([], "claude")
 
+    def test_select_group_options_are_namespaced(self) -> None:
+        """Grouped options (``SessionConfigSelectGroup``) get the same rewrite as flat ones.
+
+        Some backends present model variants grouped by family; the
+        rewriter must descend into each group's ``options`` list.
+        """
+        from acp.schema import SessionConfigSelectGroup
+
+        opt = SessionConfigOptionSelect(
+            id="model",
+            name="Model",
+            type="select",
+            category="model",
+            current_value="opus-4.6",
+            options=[
+                SessionConfigSelectGroup(
+                    group="claude-3",
+                    name="Claude 3",
+                    options=[
+                        SessionConfigSelectOption(value="opus-4.6", name="Opus"),
+                        SessionConfigSelectOption(value="haiku-4.5", name="Haiku"),
+                    ],
+                )
+            ],
+        )
+        namespace_model_options_in_place([opt], "claude")
+        assert opt.current_value == "claude:opus-4.6"
+        group = opt.options[0]
+        assert isinstance(group, SessionConfigSelectGroup)
+        assert [e.value for e in group.options] == ["claude:opus-4.6", "claude:haiku-4.5"]
+
 
 class TestSessionUpdateForwarding:
     """Backend → proxy → client session updates rewrite session id and model ids."""
@@ -574,3 +686,226 @@ class TestBuildHelpers:
     def test_humanise_unnamespaced_passes_through(self) -> None:
         """Unrecognised ids are returned verbatim — no crash."""
         assert humanise_model_id("plain") == "plain"
+
+
+class _RecordingClient:
+    """Stand-in for the proxy's [`AgentSideConnection`][acp.agent.connection.AgentSideConnection].
+
+    Captures every Client-side typed call the proxy forwards on behalf
+    of the backend.  All methods record + return a sensible default so
+    a test can drive any Client-side path without configuring per-method
+    canned responses up front.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def session_update(self, *, session_id: str, update: Any, **_kw: Any) -> None:
+        self.calls.append(("session_update", {"session_id": session_id, "update": update}))
+
+    async def request_permission(self, **kw: Any) -> Any:
+        self.calls.append(("request_permission", kw))
+        return None
+
+    async def read_text_file(self, **kw: Any) -> Any:
+        self.calls.append(("read_text_file", kw))
+        return None
+
+    async def write_text_file(self, **kw: Any) -> Any:
+        self.calls.append(("write_text_file", kw))
+        return None
+
+    async def create_terminal(self, **kw: Any) -> Any:
+        self.calls.append(("create_terminal", kw))
+        return None
+
+    async def terminal_output(self, **kw: Any) -> Any:
+        self.calls.append(("terminal_output", kw))
+        return None
+
+    async def release_terminal(self, **kw: Any) -> Any:
+        self.calls.append(("release_terminal", kw))
+        return None
+
+    async def wait_for_terminal_exit(self, **kw: Any) -> Any:
+        self.calls.append(("wait_for_terminal_exit", kw))
+        return None
+
+    async def kill_terminal(self, **kw: Any) -> Any:
+        self.calls.append(("kill_terminal", kw))
+        return None
+
+
+def _bound_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    available: tuple[str, ...] = ("claude:opus-4.6",),
+) -> tuple[ACPProxy, _FakeBackend, _RecordingClient]:
+    """Build a proxy already past the bind handshake, wired to recorders.
+
+    Returns ``(proxy, backend, client)`` so the test can assert against
+    either side of the typed bridge after exercising a forwarder.
+    """
+    backend = _FakeBackend()
+    _patch_spawn(monkeypatch, backend)
+    proxy = _new_proxy(list(available))
+
+    async def _bind() -> None:
+        await proxy.initialize(protocol_version=1)
+        await proxy.new_session(cwd="/x", mcp_servers=[])
+        await proxy.set_session_model(model_id=available[0], session_id=CLIENT_SESSION_ID)
+
+    asyncio.run(_bind())
+    client = _RecordingClient()
+    proxy._client = client  # type: ignore[assignment]
+    backend.calls.clear()
+    return proxy, backend, client
+
+
+class TestPostBindAgentForwarders:
+    """Post-bind Agent methods forward to the backend with translated ids."""
+
+    def test_cancel_forwards_with_translated_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.cancel(session_id=CLIENT_SESSION_ID))
+        assert backend.calls[-1] == ("cancel", {"session_id": backend.session_id})
+
+    def test_authenticate_forwards_method_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.authenticate(method_id="api_key"))
+        assert backend.calls[-1] == ("authenticate", {"method_id": "api_key"})
+
+    def test_set_session_mode_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.set_session_mode(mode_id="ask", session_id=CLIENT_SESSION_ID))
+        call_kw = backend.calls[-1][1]
+        assert call_kw == {"mode_id": "ask", "session_id": backend.session_id}
+
+    def test_load_session_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.load_session(cwd="/x", session_id=CLIENT_SESSION_ID, mcp_servers=[]))
+        assert backend.calls[-1][0] == "load_session"
+        assert backend.calls[-1][1]["session_id"] == backend.session_id
+
+    def test_list_sessions_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.list_sessions(cursor="abc"))
+        assert backend.calls[-1] == (
+            "list_sessions",
+            {"additional_directories": None, "cursor": "abc", "cwd": None},
+        )
+
+    def test_fork_session_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.fork_session(cwd="/x", session_id=CLIENT_SESSION_ID, mcp_servers=[]))
+        assert backend.calls[-1][1]["session_id"] == backend.session_id
+
+    def test_resume_session_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.resume_session(cwd="/x", session_id=CLIENT_SESSION_ID, mcp_servers=[]))
+        assert backend.calls[-1][1]["session_id"] == backend.session_id
+
+    def test_ext_method_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        out = asyncio.run(proxy.ext_method("foo", {"bar": 1}))
+        assert out == {"ok": True}
+        assert backend.calls[-1] == ("ext_method", {"method": "foo", "params": {"bar": 1}})
+
+    def test_ext_notification_forwards_when_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.ext_notification("evt", {"x": 1}))
+        assert backend.calls[-1] == ("ext_notification", {"method": "evt", "params": {"x": 1}})
+
+    def test_ext_notification_silent_pre_bind(self) -> None:
+        """Pre-bind ext notifications drop silently — no exception, no backend touched."""
+        proxy = _new_proxy(["claude:opus-4.6"])
+        asyncio.run(proxy.ext_notification("evt", {"x": 1}))
+        assert proxy._backend is None
+
+    def test_set_config_option_non_model_post_bind_forwards(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        asyncio.run(
+            proxy.set_config_option(config_id="theme", session_id=CLIENT_SESSION_ID, value="dark")
+        )
+        assert backend.calls[-1][0] == "set_config_option"
+        assert backend.calls[-1][1]["config_id"] == "theme"
+        assert backend.calls[-1][1]["session_id"] == backend.session_id
+
+    def test_prompt_post_bind_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, backend, _ = _bound_proxy(monkeypatch)
+        resp = asyncio.run(proxy.prompt(prompt=[], session_id=CLIENT_SESSION_ID, message_id="m1"))
+        assert isinstance(resp, PromptResponse)
+        assert backend.calls[-1][0] == "prompt"
+        assert backend.calls[-1][1]["session_id"] == backend.session_id
+        assert backend.calls[-1][1]["message_id"] == "m1"
+
+
+class TestClientSideForwarders:
+    """Backend → proxy → client forwarders rewrite the session id to ``CLIENT_SESSION_ID``."""
+
+    def test_session_update_non_config_passes_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from acp.schema import AgentMessageChunk
+
+        proxy, _backend, client = _bound_proxy(monkeypatch)
+        chunk = AgentMessageChunk(
+            session_update="agent_message_chunk",
+            content={"type": "text", "text": "hi"},
+        )
+        asyncio.run(proxy.session_update(session_id="be-1", update=chunk))
+        name, kw = client.calls[-1]
+        assert name == "session_update"
+        assert kw["session_id"] == CLIENT_SESSION_ID
+        assert kw["update"] is chunk
+
+    def test_request_permission_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from acp.schema import PermissionOption, ToolCallUpdate
+
+        proxy, _backend, client = _bound_proxy(monkeypatch)
+        options = [PermissionOption(option_id="approve", name="Approve", kind="allow_once")]
+        tool_call = ToolCallUpdate(tool_call_id="t1")
+        asyncio.run(
+            proxy.request_permission(options=options, session_id="be-1", tool_call=tool_call)
+        )
+        name, kw = client.calls[-1]
+        assert name == "request_permission"
+        assert kw["session_id"] == CLIENT_SESSION_ID
+        assert kw["options"] == options
+
+    def test_read_text_file_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, _backend, client = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.read_text_file(path="/a", session_id="be-1", limit=10, line=2))
+        name, kw = client.calls[-1]
+        assert name == "read_text_file"
+        assert kw == {"path": "/a", "session_id": CLIENT_SESSION_ID, "limit": 10, "line": 2}
+
+    def test_write_text_file_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, _backend, client = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.write_text_file(content="hi", path="/a", session_id="be-1"))
+        name, kw = client.calls[-1]
+        assert name == "write_text_file"
+        assert kw == {"content": "hi", "path": "/a", "session_id": CLIENT_SESSION_ID}
+
+    def test_create_terminal_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        proxy, _backend, client = _bound_proxy(monkeypatch)
+        asyncio.run(proxy.create_terminal(command="ls", session_id="be-1", args=["-la"]))
+        name, kw = client.calls[-1]
+        assert name == "create_terminal"
+        assert kw["session_id"] == CLIENT_SESSION_ID
+        assert kw["command"] == "ls"
+        assert kw["args"] == ["-la"]
+
+    @pytest.mark.parametrize(
+        "method",
+        ["terminal_output", "release_terminal", "wait_for_terminal_exit", "kill_terminal"],
+    )
+    def test_terminal_method_forwards(self, monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+        proxy, _backend, client = _bound_proxy(monkeypatch)
+        coro = getattr(proxy, method)(session_id="be-1", terminal_id="term-1")
+        asyncio.run(coro)
+        name, kw = client.calls[-1]
+        assert name == method
+        assert kw == {"session_id": CLIENT_SESSION_ID, "terminal_id": "term-1"}
