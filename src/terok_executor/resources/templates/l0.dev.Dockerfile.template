@@ -106,6 +106,15 @@ RUN set -eux; \
 # acceptable: clients use ``StrictHostKeyChecking=no`` +
 # ``UserKnownHostsFile=/dev/null``, and the per-task host port is
 # loopback-bound (experimental-runtime tradeoff).
+#
+# Root-login plumbing (``/root/.ssh`` + symlink) is baked at build time
+# rather than written by the init script.  Under krun the rootfs is
+# virtio-fs and the host-side server runs as the operator (uid 1000), so
+# guest-root *cannot* create root-owned dirs/symlinks at runtime — every
+# such attempt comes back EACCES.  Doing it during ``podman build`` (which
+# runs under crun, where ownership ops work) sidesteps the constraint.
+# Dormant under crun: sshd doesn't run, the sshd_config above sets
+# ``PermitRootLogin no``, and the trust file ships empty.
 RUN install -d -m 0755 /etc/ssh/sshd_config.d \
     && install -d -m 0755 /etc/ssh/authorized_keys.d \
     && printf '%s\n' \
@@ -125,7 +134,9 @@ RUN install -d -m 0755 /etc/ssh/sshd_config.d \
         > /etc/ssh/sshd_config.d/00-terok.conf \
     && : > /etc/ssh/authorized_keys.d/terok \
     && chmod 0644 /etc/ssh/authorized_keys.d/terok \
-    && ssh-keygen -A
+    && ssh-keygen -A \
+    && install -d -m 0700 -o root -g root /root/.ssh \
+    && ln -sf /etc/ssh/authorized_keys.d/terok /root/.ssh/authorized_keys
 
 WORKDIR /workspace
 

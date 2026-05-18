@@ -664,15 +664,16 @@ class TestTemplateRendering:
           is already root under krun (libkrun ignores the L0's ``USER dev``
           directive) and ``sudo`` would fail anyway under libkrun's
           virtio-fs (the host-side server can't honour setuid exec)
+        - **no** ``mkdir`` / ``ln`` inside the krun gate block — runtime
+          writes to root-owned paths also EACCES on libkrun's virtio-fs;
+          the L0 image carries the ``/root/.ssh`` dir + authorized_keys
+          symlink so the script doesn't need to create them
         - ``AllowUsers dev root`` + ``PermitRootLogin without-password``
           override flags — sshd is started with these as ``-o`` args
           (first-wins) so both the dev (default for agents that refuse
-          uid 0) and root (escape hatch for tasks that need privileged
-          ops) login paths work
-        - ``/root/.ssh/authorized_keys`` symlink — root-login plumbing
-          is created here at runtime (not baked into the L0) so a
-          crun-mode image carries nothing that would authorise a root
-          ssh session
+          uid 0) and root login paths work
+        - ``PidFile=/dev/null`` — sshd's default PID-file write would also
+          EACCES on the rootfs; ``/dev/null`` is a no-op write on devtmpfs
         """
         script_path = (
             Path(__file__).resolve().parent.parent.parent
@@ -686,20 +687,36 @@ class TestTemplateRendering:
         assert "TEROK_CONTAINER_RUNTIME" in text
         assert "/usr/sbin/sshd" in text
         assert "setsid" in text
-        # Extract just the krun-gate block so unrelated future sudo uses
-        # elsewhere in the script don't false-positive this guard.
+        # Extract just the krun-gate block so unrelated future sudo/mkdir
+        # uses elsewhere in the script don't false-positive these guards.
         block_start = text.find('"${TEROK_CONTAINER_RUNTIME:-}" == "krun"')
         assert block_start >= 0, "krun gate disappeared"
         block_end = text.find("\nfi\n", block_start)
         block = text[block_start:block_end]
         assert "sudo" not in block, (
-            "sudo crept back into the krun sshd block — won't work on libkrun's virtiofs"
+            "sudo crept back into the krun sshd block — won't work on libkrun's virtio-fs"
         )
-        # Both login paths and their wiring belong to the krun branch and
-        # nowhere else (so the crun image's L0 stays root-login-free).
+        assert "mkdir" not in block and "ln -s" not in block, (
+            "mkdir / ln crept back into the krun sshd block — guest-root can't "
+            "create root-owned paths via libkrun's virtio-fs (host-side server "
+            "runs as the operator); these belong in the L0 image instead"
+        )
+        # The runtime override flags + PID-file workaround.
         assert "AllowUsers dev root" in block
         assert "PermitRootLogin without-password" in block
-        assert "/root/.ssh/authorized_keys" in block
+        assert "PidFile=/dev/null" in block
+
+    def test_l0_bakes_root_login_plumbing(self) -> None:
+        """``/root/.ssh`` + the ``authorized_keys`` symlink to the
+        bind-mount target are created at build time (not by the init
+        script) because under krun the rootfs is virtio-fs and guest-root
+        can't create root-owned dirs/symlinks at runtime — every such
+        attempt returns EACCES.  Dormant under crun: sshd doesn't run,
+        the baked sshd_config still says ``PermitRootLogin no``, and the
+        authorized_keys file ships empty."""
+        content = render_l0("ubuntu:24.04", family="deb")
+        assert "/root/.ssh" in content
+        assert "ln -sf /etc/ssh/authorized_keys.d/terok /root/.ssh/authorized_keys" in content
 
     def test_l0_hardens_sshd_to_pubkey_only_dev_only_no_forwarding(self) -> None:
         """The sshd config drop-in collapses the surface to a single

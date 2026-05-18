@@ -42,27 +42,31 @@ set -euo pipefail
 #
 # Operators can log in as ``dev`` (default, for AI agents that refuse
 # uid 0) or as ``root`` (escape hatch for tasks that need privileged
-# ops — sudo doesn't work, this is the workaround).  The two paths
-# share the same bind-mounted authorized_keys file; the root path is
-# wired in here (not baked into the L0) so a crun-mode image carries
-# nothing that would authorise a root ssh session.  ``-o`` overrides
+# ops — sudo doesn't work, this is the workaround).  ``-o`` overrides
 # the L0's restrictive ``PermitRootLogin no`` + ``AllowUsers dev``
-# baked defaults — first-wins, and ``-o`` is processed before the
-# config file.
+# baked defaults for this sshd instance only — first-wins, and ``-o``
+# is processed before the config file.
+#
+# ``PidFile=/dev/null`` because under krun the rootfs is virtio-fs and
+# the host-side server runs as the operator (uid 1000); guest-root can't
+# create the PID file's parent dir or a root-owned PID file inside it
+# (every metadata op comes back EACCES).  Writing the PID line to
+# /dev/null is a no-op write that succeeds — sshd doesn't fail-start
+# over a missing PID file.  ``/root/.ssh`` + the authorized_keys symlink
+# for the root-login path are baked into the L0 for the same reason
+# (the build runs under crun, where ownership ops work).
 #
 # The supervisor loop restarts sshd if it crashes (panic, OOM, etc.);
 # ``setsid`` puts the loop in its own session so SIGHUP from the outer
 # init shell (which exits after ``exec bash`` below) can't take it down.
 if [[ "${TEROK_CONTAINER_RUNTIME:-}" == "krun" ]]; then
   echo ">> starting sshd supervisor on TCP 22 (krun mode — root + dev login)"
-  mkdir -p /run/sshd /root/.ssh
-  ln -sf /etc/ssh/authorized_keys.d/terok /root/.ssh/authorized_keys
-  chmod 700 /root/.ssh
   setsid bash -c '
     while :; do
       /usr/sbin/sshd -D -e \
         -o "AllowUsers dev root" \
-        -o "PermitRootLogin without-password"
+        -o "PermitRootLogin without-password" \
+        -o "PidFile=/dev/null"
       echo "[sshd-supervisor] sshd exited (code $?); restarting in 1s" >&2
       sleep 1
     done
