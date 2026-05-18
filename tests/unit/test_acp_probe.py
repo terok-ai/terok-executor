@@ -78,10 +78,20 @@ class _CannedBackend:
 
 
 def _patch_spawn(monkeypatch: pytest.MonkeyPatch, backend: _CannedBackend) -> None:
-    """Install *backend* as the next ``spawn_agent_process`` result."""
+    """Install *backend* as the next ``spawn_agent_process`` result.
+
+    The fake asserts the unpacking contract: command + tuple-of-args
+    rather than a single list.  A regression where ``probe_agent_models``
+    accidentally passed ``wrapper_argv`` whole would otherwise silently
+    pass the test.
+    """
 
     @asynccontextmanager
-    async def _fake_spawn(_client, _command, *_args, **_kw):
+    async def _fake_spawn(_client, command, *args, **_kw):
+        assert command == "echo", f"expected command='echo', got {command!r}"
+        assert args and args[0].startswith("terok-"), (
+            f"expected first arg to be wrapper name, got {args!r}"
+        )
         yield backend, None
 
     monkeypatch.setattr(probe_module, "spawn_agent_process", _fake_spawn)

@@ -16,7 +16,7 @@ by [`AgentRosterCache`][terok_executor.acp.cache.AgentRosterCache] and
 reused for the lifetime of the authenticated session.
 
 The probe spawns the wrapper directly via the ACP SDK's
-[`spawn_agent_process`][acp.spawn_agent_process].  Argv is supplied by
+`acp.spawn_agent_process`.  Argv is supplied by
 the caller (the roster), so the probe itself doesn't need to know about
 ``podman``, ``krun``, or the sandbox runtime.
 """
@@ -51,7 +51,7 @@ async def probe_agent_models(
 ) -> tuple[str, ...]:
     """Drive the minimal ACP handshake against ``terok-{agent_id}-acp``.
 
-    Spawns the wrapper via [`spawn_agent_process`][acp.spawn_agent_process]
+    Spawns the wrapper via `acp.spawn_agent_process`
     (which owns the asyncio stdio bridging and the graceful subprocess
     shutdown dance), sends ``initialize`` and ``session/new``, reads
     the ``models`` block, and returns the bare model ids.
@@ -82,7 +82,7 @@ async def probe_agent_models(
 
 
 class _ProbeClient:
-    """Minimal [`Client`][acp.Client] impl for the probe handshake.
+    """Minimal `acp.Client` impl for the probe handshake.
 
     The probe never triggers backend → client traffic in a healthy
     wrapper: ``initialize`` + ``session/new`` complete before any tool
@@ -94,7 +94,7 @@ class _ProbeClient:
     """
 
     def on_connect(self, _conn: Any) -> None:
-        """Required by the [`Client`][acp.Client] protocol; nothing to do here."""
+        """Required by the `acp.Client` protocol; nothing to do here."""
 
     async def session_update(self, *_: object, **__: object) -> None:
         """Swallow progress notifications a chatty wrapper might emit."""

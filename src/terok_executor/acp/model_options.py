@@ -39,7 +39,7 @@ MODEL_OPTION_CATEGORY = "model"
 """ACP semantic category for the model selector configOption.
 
 Used as both the ``category`` and the ``id`` field of the
-[`SessionConfigOptionSelect`][acp.schema.SessionConfigOptionSelect] we
+`acp.schema.SessionConfigOptionSelect` we
 build — keeping them in sync prevents drift between the discriminator
 the proxy emits and the one downstream code matches on.
 """
@@ -110,8 +110,14 @@ def namespace_model_options_in_place(
 
 
 def _namespace_select_in_place(opt: SessionConfigOptionSelect, prefix: str) -> None:
-    """Apply *prefix* to the select's current value and every option value."""
-    if MODEL_NAMESPACE_SEP not in opt.current_value:
+    """Apply *prefix* to the select's current value and every option value.
+
+    Idempotency uses ``startswith(prefix)`` rather than "contains a colon" —
+    backend model ids that legitimately carry colons (e.g. ``azure:gpt-4.1``)
+    must still be prefixed; a bare ``:``-test would mis-classify them as
+    already-namespaced and let bare ids leak back to the client.
+    """
+    if not opt.current_value.startswith(prefix):
         opt.current_value = prefix + opt.current_value
     for entry in opt.options:
         if isinstance(entry, SessionConfigSelectOption):
@@ -123,7 +129,7 @@ def _namespace_select_in_place(opt: SessionConfigOptionSelect, prefix: str) -> N
 
 def _maybe_prefix(entry: SessionConfigSelectOption, prefix: str) -> None:
     """Add *prefix* to ``entry.value`` unless it already carries it."""
-    if MODEL_NAMESPACE_SEP not in entry.value:
+    if not entry.value.startswith(prefix):
         entry.value = prefix + entry.value
 
 

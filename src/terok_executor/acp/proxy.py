@@ -7,14 +7,14 @@
 [`ACPRoster.attach`][terok_executor.acp.roster.ACPRoster.attach].  It
 implements **both** sides of the ACP protocol on the same object:
 
-- [`Agent`][acp.Agent] — facing the connected ACP client (Zed, Toad, …).
-  An [`AgentSideConnection`][acp.agent.connection.AgentSideConnection]
+- `acp.Agent` — facing the connected ACP client (Zed, Toad, …).
+  An `acp.agent.connection.AgentSideConnection`
   reads the client's frames, deserialises them into typed pydantic
   models, and dispatches to ``self.initialize`` / ``self.new_session``
   / ``self.prompt`` / etc.
-- [`Client`][acp.Client] — facing the bound in-container backend wrapper.
+- `acp.Client` — facing the bound in-container backend wrapper.
   Once a model has been picked, a
-  [`ClientSideConnection`][acp.client.connection.ClientSideConnection]
+  `acp.client.connection.ClientSideConnection`
   to ``terok-{agent}-acp`` reads the wrapper's frames and dispatches
   backend → client traffic (``session/update``, ``request_permission``,
   ``fs/*``, ``terminal/*``) onto the same proxy object so it can forward
@@ -24,13 +24,13 @@ Two phases drive the lifecycle:
 
 - **Pre-bind**: ``initialize`` and ``session/new`` answer locally,
   advertising the aggregated ``agent:model`` list in
-  [`SessionModelState`][acp.schema.SessionModelState] plus a mirroring
+  `acp.schema.SessionModelState` plus a mirroring
   ``configOptions[category=model]``.  No backend process exists yet.
 - **Bound**: on the first model-picking client request — modern ACP's
   ``session/set_model`` or older Zed's ``session/set_config_option(category=model)``,
   or lazily on the first backend-needing method like ``session/prompt``
   — the proxy spawns the in-container wrapper through
-  [`spawn_agent_process`][acp.spawn_agent_process], replays
+  `acp.spawn_agent_process`, replays
   ``initialize`` + ``session/new`` + ``session/set_model`` against it,
   and from then on forwards typed calls in both directions.  Backend
   responses and notifications carrying model ids are re-namespaced on
@@ -160,6 +160,7 @@ class ACPProxy:
         self._bound_agent: str | None = None
         self._backend_session_id: str | None = None
         self._client_mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None = None
+        self._client_additional_directories: list[str] | None = None
         self._client_capabilities: ClientCapabilities | None = None
         self._aggregated_models: list[str] = []
         # Namespaced ``agent:model`` advertised as ``currentModelId`` in
@@ -173,7 +174,7 @@ class ACPProxy:
         """Run the typed proxy loop until the client disconnects.
 
         Hands the client side to
-        [`AgentSideConnection`][acp.agent.connection.AgentSideConnection]
+        `acp.agent.connection.AgentSideConnection`
         which dispatches typed methods on this object.  Always tears the
         bound backend down on exit, even on cancellation.
         """
@@ -184,7 +185,7 @@ class ACPProxy:
             await self._teardown_backend()
 
     def on_connect(self, _conn: Any) -> None:
-        """Required by the [`Agent`][acp.Agent] / [`Client`][acp.Client] protocols."""
+        """Required by the `acp.Agent` / `acp.Client` protocols."""
 
     # ── Agent protocol (connected client → proxy) ─────────────────────
 
@@ -225,13 +226,14 @@ class ACPProxy:
         exists.  The real backend session id is captured on bind and
         translated on every forwarded frame.
         """
-        del cwd, additional_directories
+        del cwd
         if self._session_announced:
             raise RequestError.invalid_request(
                 {"details": "proxy supports one session per connection (v1)"}
             )
         self._session_announced = True
         self._client_mcp_servers = mcp_servers
+        self._client_additional_directories = additional_directories
         self._aggregated_models = await self._roster.list_available_agents()
         self._default_namespaced = self._aggregated_models[0] if self._aggregated_models else None
         return build_aggregated_session_new(CLIENT_SESSION_ID, self._aggregated_models)
@@ -240,7 +242,7 @@ class ACPProxy:
         self, model_id: str, session_id: str, **_kw: Any
     ) -> SetSessionModelResponse | None:
         """Bind on first call; same-agent re-pick forwards through."""
-        del session_id
+        self._require_client_session(session_id)
         await self._select_model(model_id)
         return SetSessionModelResponse()
 
@@ -255,7 +257,7 @@ class ACPProxy:
         both.  Non-model categories pass through to the bound backend;
         a non-model option pre-bind is rejected.
         """
-        del session_id
+        self._require_client_session(session_id)
         if config_id == MODEL_OPTION_CATEGORY and isinstance(value, str):
             await self._select_model(value)
             opt = build_model_option(self._aggregated_models, current=value)
@@ -276,7 +278,7 @@ class ACPProxy:
         **_kw: Any,
     ) -> PromptResponse:
         """Lazy-bind to the default model if needed, then forward."""
-        del session_id
+        self._require_client_session(session_id)
         await self._ensure_bound_for_default()
         backend, backend_session = self._require_bound()
         return await backend.prompt(
@@ -298,7 +300,7 @@ class ACPProxy:
         self, mode_id: str, session_id: str, **_kw: Any
     ) -> SetSessionModeResponse | None:
         """Forward to bound backend."""
-        del session_id
+        self._require_client_session(session_id)
         backend, backend_session = self._require_bound()
         return await backend.set_session_mode(mode_id=mode_id, session_id=backend_session)
 
@@ -311,7 +313,7 @@ class ACPProxy:
         **_kw: Any,
     ) -> LoadSessionResponse | None:
         """Forward to bound backend (v1 advertises no session-load capability)."""
-        del session_id
+        self._require_client_session(session_id)
         backend, backend_session = self._require_bound()
         return await backend.load_session(
             cwd=cwd,
@@ -342,7 +344,7 @@ class ACPProxy:
         **_kw: Any,
     ) -> ForkSessionResponse:
         """Forward to bound backend."""
-        del session_id
+        self._require_client_session(session_id)
         backend, backend_session = self._require_bound()
         return await backend.fork_session(
             cwd=cwd,
@@ -360,7 +362,7 @@ class ACPProxy:
         **_kw: Any,
     ) -> ResumeSessionResponse:
         """Forward to bound backend."""
-        del session_id
+        self._require_client_session(session_id)
         backend, backend_session = self._require_bound()
         return await backend.resume_session(
             cwd=cwd,
@@ -370,11 +372,20 @@ class ACPProxy:
         )
 
     async def close_session(self, session_id: str, **_kw: Any) -> Any:
-        """Forward to bound backend (no-op if not bound — nothing to close)."""
-        del session_id
+        """Forward to bound backend and tear down the wrapper.
+
+        v1 keeps one backend per connection; after a successful close the
+        wrapper has nothing more to do, so reap it eagerly instead of
+        leaving it around to be killed by ``_teardown_backend`` on
+        disconnect.  Returns ``None`` when no backend was ever bound.
+        """
+        self._require_client_session(session_id)
         if self._backend is None or self._backend_session_id is None:
             return None
-        return await self._backend.close_session(session_id=self._backend_session_id)
+        try:
+            return await self._backend.close_session(session_id=self._backend_session_id)
+        finally:
+            await self._teardown_backend()
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Forward extension methods to the bound backend."""
@@ -559,6 +570,7 @@ class ACPProxy:
             new_resp = await backend.new_session(
                 cwd=CONTAINER_WORKSPACE,
                 mcp_servers=self._client_mcp_servers or [],
+                additional_directories=self._client_additional_directories,
             )
             self._backend_session_id = new_resp.session_id
             await backend.set_session_model(model_id=model_id, session_id=self._backend_session_id)
@@ -598,7 +610,7 @@ class ACPProxy:
         """Return the connected-client wrapper or raise (unreachable in practice).
 
         [`run`][terok_executor.acp.proxy.ACPProxy.run] sets ``self._client``
-        before [`listen`][acp.agent.connection.AgentSideConnection.listen]
+        before `acp.agent.connection.AgentSideConnection.listen`
         starts dispatching frames, so Client-side forwarders only run after
         ``_client`` is set — but mypy doesn't know that.  The runtime check
         costs a comparison; the alternative is one ``assert`` per forwarder.
@@ -606,6 +618,18 @@ class ACPProxy:
         if self._client is None:
             raise RuntimeError("proxy used before run() — client side not wired")
         return self._client
+
+    def _require_client_session(self, session_id: str) -> None:
+        """Reject session-scoped calls that target an unknown session id.
+
+        The proxy advertises exactly one session per connection
+        (`CLIENT_SESSION_ID`) and only after ``session/new`` has been
+        called.  Anything else is either a client bug (stale id) or a
+        protocol-violating request that would otherwise mutate backend
+        state from an invalid client view.
+        """
+        if not self._session_announced or session_id != CLIENT_SESSION_ID:
+            raise RequestError.invalid_request({"details": f"unknown session id: {session_id!r}"})
 
 
 class AgentBindError(RuntimeError):

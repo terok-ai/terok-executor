@@ -21,8 +21,8 @@ Module map:
   [`ACPRoster`][terok_executor.acp.roster.ACPRoster] and the
   vault-side [`list_authenticated_agents`][terok_executor.acp.roster.list_authenticated_agents].
 - [`proxy`][terok_executor.acp.proxy] — the typed bidirectional ACP
-  mediator: implements both [`Agent`][acp.Agent] (toward the connected
-  client) and [`Client`][acp.Client] (toward the bound backend wrapper)
+  mediator: implements both `acp.Agent` (toward the connected
+  client) and `acp.Client` (toward the bound backend wrapper)
   on one object.  Drives the bind handshake on first model pick.
 - [`probe`][terok_executor.acp.probe] — the minimal ``initialize +
   session/new`` handshake that extracts an agent's model roster.

@@ -93,6 +93,10 @@ class _FakeBackend:
     async def cancel(self, **kw: Any) -> None:
         self.calls.append(("cancel", kw))
 
+    async def close_session(self, **kw: Any) -> None:
+        self.calls.append(("close_session", kw))
+        return None
+
     async def set_config_option(self, **kw: Any) -> SetSessionConfigOptionResponse:
         # Echoes a bare-id model option so the proxy's post-bind
         # ``namespace_model_options_in_place`` rewrite is observable
@@ -247,6 +251,27 @@ class TestPromptLazyBindGate:
         assert exc.value.code == _JSONRPC_INVALID_REQUEST
 
 
+class TestSessionIdValidation:
+    """Session-scoped handlers reject stale or pre-``session/new`` ids."""
+
+    def test_set_session_model_pre_new_session_rejected(self) -> None:
+        """Calling ``set_session_model`` before ``session/new`` errors."""
+        proxy = _new_proxy(["claude:opus-4.6"])
+        with pytest.raises(RequestError) as exc:
+            asyncio.run(
+                proxy.set_session_model(model_id="claude:opus-4.6", session_id=CLIENT_SESSION_ID)
+            )
+        assert exc.value.code == _JSONRPC_INVALID_REQUEST
+
+    def test_prompt_with_unknown_session_id_rejected(self) -> None:
+        """Arbitrary client-supplied session ids are rejected post-new."""
+        proxy = _new_proxy(["claude:opus-4.6"])
+        asyncio.run(proxy.new_session(cwd="/x", mcp_servers=[]))
+        with pytest.raises(RequestError) as exc:
+            asyncio.run(proxy.prompt(prompt=[], session_id="someone-elses-session"))
+        assert exc.value.code == _JSONRPC_INVALID_REQUEST
+
+
 class TestBind:
     """End-to-end bind flow with a patched ``spawn_agent_process``."""
 
@@ -282,6 +307,25 @@ class TestBind:
         set_model_call = backend.calls[2][1]
         assert set_model_call["model_id"] == "opus-4.6"  # namespace stripped
         assert set_model_call["session_id"] == backend.session_id
+
+    def test_additional_directories_forwarded_on_bind(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Client-supplied ``additional_directories`` reach the backend's ``session/new``."""
+        backend = _FakeBackend()
+        _patch_spawn(monkeypatch, backend)
+        proxy = _new_proxy(["claude:opus-4.6"])
+
+        async def _drive() -> None:
+            await proxy.initialize(protocol_version=1)
+            await proxy.new_session(
+                cwd="/host/proj", mcp_servers=[], additional_directories=["/extra"]
+            )
+            await proxy.set_session_model(model_id="claude:opus-4.6", session_id=CLIENT_SESSION_ID)
+
+        asyncio.run(_drive())
+        new_session_call = backend.calls[1][1]
+        assert new_session_call["additional_directories"] == ["/extra"]
 
     def test_cross_agent_pick_after_bind_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """v1 forbids cross-agent switches; the second pick errors out."""
@@ -371,6 +415,23 @@ class TestBackendForwarding:
         assert model_opt.current_value == "claude:opus-4.6"
         assert [e.value for e in model_opt.options] == ["claude:opus-4.6"]
 
+    def test_close_session_tears_backend_down(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``close_session`` reaps the wrapper; the proxy can rebind afterwards."""
+        backend = _FakeBackend()
+        _patch_spawn(monkeypatch, backend)
+        proxy = _new_proxy(["claude:opus-4.6"])
+
+        async def _drive() -> None:
+            await proxy.initialize(protocol_version=1)
+            await proxy.new_session(cwd="/x", mcp_servers=[])
+            await proxy.set_session_model(model_id="claude:opus-4.6", session_id=CLIENT_SESSION_ID)
+            await proxy.close_session(session_id=CLIENT_SESSION_ID)
+
+        asyncio.run(_drive())
+        assert any(name == "close_session" for name, _ in backend.calls)
+        assert proxy._backend is None
+        assert proxy._backend_session_id is None
+
 
 class TestNamespaceModelOptionsInPlace:
     """Typed in-place rewriter — used on every backend → client config option."""
@@ -398,6 +459,25 @@ class TestNamespaceModelOptionsInPlace:
         namespace_model_options_in_place([opt], "claude")
         assert opt.current_value == "claude:opus-4.6"
         assert [e.value for e in opt.options] == ["claude:opus-4.6", "claude:haiku-4.5"]
+
+    def test_colon_bearing_backend_value_still_prefixed(self) -> None:
+        """A bare model id that contains a colon (``azure:gpt-4.1``) still gets prefixed.
+
+        Idempotency keys on the agent prefix, not on "contains a colon" —
+        otherwise multi-vendor backends that already namespace their own
+        ids would leak through as bare values the client can't address.
+        """
+        opt = SessionConfigOptionSelect(
+            id="model",
+            name="Model",
+            type="select",
+            category="model",
+            current_value="azure:gpt-4.1",
+            options=[SessionConfigSelectOption(value="azure:gpt-4.1", name="GPT-4.1")],
+        )
+        namespace_model_options_in_place([opt], "claude")
+        assert opt.current_value == "claude:azure:gpt-4.1"
+        assert [e.value for e in opt.options] == ["claude:azure:gpt-4.1"]
 
     def test_non_model_category_untouched(self) -> None:
         """Other categories pass through unchanged."""
