@@ -321,11 +321,19 @@ class TestMakeKrunRuntime:
 
 
 class TestKrunLaunchArgs:
-    """`krun_launch_args` collects the three things that reach across
-    the orchestrator/runtime boundary into executor's domain — the
-    host-pubkey bind-mount, the init-script gate env var, and the
-    USER-directive override — so terok doesn't have to know the
-    in-container target path or any of the other in-guest details."""
+    """`krun_launch_args` collects the four things that reach across the
+    orchestrator/runtime boundary into executor's domain — the host-pubkey
+    bind-mount, the init-script gate env var, the USER-directive override,
+    and the host upstream DNS forwarding — so terok doesn't have to know
+    the in-container target path or any other in-guest detail."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_host_upstream_dns(self):
+        """Pin host DNS detection so per-host /etc/resolv.conf can't leak
+        a real address into the assertions.  Individual tests override
+        the return value where they care."""
+        with patch("terok_executor.krun.host_upstream_dns", return_value=None) as m:
+            yield m
 
     def test_emits_pubkey_bind_mount_with_shared_selinux_relabel(
         self, tmp_path: Path, _vault_backed
@@ -366,3 +374,116 @@ class TestKrunLaunchArgs:
 
         user_idx = args.index("--user")
         assert args[user_idx + 1] == "root"
+
+    def test_appends_dns_when_upstream_detected(
+        self, tmp_path: Path, _vault_backed, _stub_host_upstream_dns
+    ) -> None:
+        """When the host has a routable resolver, emit ``--dns <ip>``.
+
+        TSI proxies the guest's UDP/53 to the host VMM, but the guest
+        can't reach a host-loopback resolver — surface the real upstream.
+        """
+        from terok_executor.krun import krun_launch_args
+
+        _stub_host_upstream_dns.return_value = "192.0.2.53"
+        with patch("terok_executor.krun._ensure_safe_runtime_dir", return_value=tmp_path):
+            tmp_path.chmod(0o700)
+            args = krun_launch_args(cfg=_vault_backed)
+
+        dns_idx = args.index("--dns")
+        assert args[dns_idx + 1] == "192.0.2.53"
+
+    def test_omits_dns_when_no_routable_upstream(
+        self, tmp_path: Path, _vault_backed, _stub_host_upstream_dns
+    ) -> None:
+        """Stub-only hosts (loopback nameserver, no /run/systemd/resolve)
+        get no ``--dns`` — operators see broken resolution in the guest
+        and add their own ``--dns`` (rather than silently picking a
+        public resolver that would widen the shield allowlist)."""
+        from terok_executor.krun import krun_launch_args
+
+        _stub_host_upstream_dns.return_value = None
+        with patch("terok_executor.krun._ensure_safe_runtime_dir", return_value=tmp_path):
+            tmp_path.chmod(0o700)
+            args = krun_launch_args(cfg=_vault_backed)
+
+        assert "--dns" not in args
+
+
+class TestHostUpstreamDns:
+    """`host_upstream_dns` prefers systemd-resolved's real upstreams over
+    the ``127.0.0.53`` stub, skipping any loopback resolver."""
+
+    def test_prefers_systemd_resolved_real_conf(self, tmp_path: Path) -> None:
+        from terok_executor.krun import host_upstream_dns
+
+        real = tmp_path / "real-resolv.conf"
+        real.write_text("# real upstreams\nnameserver 192.0.2.53\nnameserver 192.0.2.54\n")
+        stub = tmp_path / "stub-resolv.conf"
+        stub.write_text("nameserver 127.0.0.53\n")
+
+        with patch("terok_executor.krun._SYSTEMD_RESOLVED_REAL_CONF", real):
+            # /etc/resolv.conf must not even be consulted when the real
+            # file is readable — patch it to a unreachable path to prove
+            # the order (Path("/nonexistent") read_text will OSError).
+            assert host_upstream_dns() == "192.0.2.53"
+
+    def test_falls_back_to_etc_resolv_when_systemd_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No systemd-resolved file → parse ``/etc/resolv.conf`` directly."""
+        from terok_executor import krun as krun_mod
+
+        etc = tmp_path / "etc-resolv.conf"
+        etc.write_text("nameserver 192.0.2.99\n")
+
+        original_read = Path.read_text
+
+        def _read(self: Path, *a, **kw):  # type: ignore[no-untyped-def]
+            if self == krun_mod._SYSTEMD_RESOLVED_REAL_CONF:
+                raise OSError("missing")
+            if self == Path("/etc/resolv.conf"):
+                return etc.read_text(*a, **kw)
+            return original_read(self, *a, **kw)
+
+        monkeypatch.setattr(Path, "read_text", _read)
+        assert krun_mod.host_upstream_dns() == "192.0.2.99"
+
+    def test_skips_loopback_entries(self, tmp_path: Path) -> None:
+        """``127.x`` and ``::1`` are unreachable from the krun guest."""
+        from terok_executor.krun import host_upstream_dns
+
+        f = tmp_path / "resolv.conf"
+        f.write_text("nameserver 127.0.0.53\nnameserver ::1\nnameserver 9.9.9.9\n")
+        with patch("terok_executor.krun._SYSTEMD_RESOLVED_REAL_CONF", f):
+            assert host_upstream_dns() == "9.9.9.9"
+
+    def test_returns_none_when_no_routable_resolver(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Loopback-only host with no readable resolv.conf at either path."""
+        from terok_executor import krun as krun_mod
+
+        empty = tmp_path / "loopback-only"
+        empty.write_text("nameserver 127.0.0.53\n")
+
+        original_read = Path.read_text
+
+        def _read(self: Path, *a, **kw):  # type: ignore[no-untyped-def]
+            if self == krun_mod._SYSTEMD_RESOLVED_REAL_CONF:
+                return empty.read_text(*a, **kw)
+            if self == Path("/etc/resolv.conf"):
+                raise OSError("missing")
+            return original_read(self, *a, **kw)
+
+        monkeypatch.setattr(Path, "read_text", _read)
+        assert krun_mod.host_upstream_dns() is None
+
+    def test_ignores_malformed_address_tokens(self, tmp_path: Path) -> None:
+        """Garbage on a nameserver line is skipped, not raised."""
+        from terok_executor.krun import host_upstream_dns
+
+        f = tmp_path / "resolv.conf"
+        f.write_text("nameserver not-an-ip\nnameserver 9.9.9.9\n")
+        with patch("terok_executor.krun._SYSTEMD_RESOLVED_REAL_CONF", f):
+            assert host_upstream_dns() == "9.9.9.9"
