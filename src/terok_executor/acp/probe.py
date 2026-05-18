@@ -27,7 +27,7 @@ import asyncio
 import logging
 from typing import Any, NoReturn
 
-from acp import PROTOCOL_VERSION, RequestError, spawn_agent_process
+from acp import CLIENT_METHODS, PROTOCOL_VERSION, RequestError, spawn_agent_process
 from acp.schema import ClientCapabilities
 
 _logger = logging.getLogger(__name__)
@@ -78,35 +78,35 @@ class _ProbeClient:
 
     async def request_permission(self, *_: object, **__: object) -> NoReturn:
         """Fast-fail — probe can't relay permission prompts."""
-        _not_supported_during_probe("session/request_permission")
+        _not_supported_during_probe(CLIENT_METHODS["session_request_permission"])
 
     async def read_text_file(self, *_: object, **__: object) -> NoReturn:
         """Fast-fail — probe can't relay fs reads."""
-        _not_supported_during_probe("fs/read_text_file")
+        _not_supported_during_probe(CLIENT_METHODS["fs_read_text_file"])
 
     async def write_text_file(self, *_: object, **__: object) -> NoReturn:
         """Fast-fail — probe can't relay fs writes."""
-        _not_supported_during_probe("fs/write_text_file")
+        _not_supported_during_probe(CLIENT_METHODS["fs_write_text_file"])
 
     async def create_terminal(self, *_: object, **__: object) -> NoReturn:
         """Fast-fail — probe can't open terminals."""
-        _not_supported_during_probe("terminal/create")
+        _not_supported_during_probe(CLIENT_METHODS["terminal_create"])
 
     async def terminal_output(self, *_: object, **__: object) -> NoReturn:
         """Fast-fail — probe owns no terminals."""
-        _not_supported_during_probe("terminal/output")
+        _not_supported_during_probe(CLIENT_METHODS["terminal_output"])
 
     async def release_terminal(self, *_: object, **__: object) -> NoReturn:
         """Fast-fail — probe owns no terminals."""
-        _not_supported_during_probe("terminal/release")
+        _not_supported_during_probe(CLIENT_METHODS["terminal_release"])
 
     async def wait_for_terminal_exit(self, *_: object, **__: object) -> NoReturn:
         """Fast-fail — probe owns no terminals."""
-        _not_supported_during_probe("terminal/wait_for_exit")
+        _not_supported_during_probe(CLIENT_METHODS["terminal_wait_for_exit"])
 
     async def kill_terminal(self, *_: object, **__: object) -> NoReturn:
         """Fast-fail — probe owns no terminals."""
-        _not_supported_during_probe("terminal/kill")
+        _not_supported_during_probe(CLIENT_METHODS["terminal_kill"])
 
     async def ext_method(self, _name: str, _payload: dict[str, Any]) -> NoReturn:
         """Fast-fail — probe doesn't carry extension surfaces."""

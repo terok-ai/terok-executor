@@ -31,6 +31,7 @@ from terok_sandbox import SandboxConfig
 from terok_executor.container.build import AGENTS_LABEL
 
 from .cache import GLOBAL_CACHE, AgentRosterCache, CacheKey
+from .model_options import MODEL_NAMESPACE_SEP
 from .probe import ProbeError, probe_agent_models
 from .proxy import ACPProxy
 
@@ -200,7 +201,7 @@ class ACPRoster:
         out: list[str] = []
         for agent in agents_in_order:
             for model in self._cache.get(self._cache_key(agent)) or ():
-                out.append(f"{agent}:{model}")
+                out.append(f"{agent}{MODEL_NAMESPACE_SEP}{model}")
         return out
 
     async def warm(self, agent_id: str) -> tuple[str, ...]:

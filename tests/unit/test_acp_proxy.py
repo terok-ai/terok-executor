@@ -43,6 +43,10 @@ from terok_executor.acp.proxy import (
     AgentBindError,
 )
 
+# JSON-RPC error codes the proxy maps onto via `RequestError.invalid_*`.
+_JSONRPC_INVALID_REQUEST = -32600
+_JSONRPC_INVALID_PARAMS = -32602
+
 
 class _StubRoster:
     """Minimal stand-in for :class:`ACPRoster`.
@@ -64,48 +68,35 @@ class _StubRoster:
 
 
 class _FakeBackend:
-    """Stand-in for a [`ClientSideConnection`][acp.ClientSideConnection].
-
-    Records typed calls and returns whatever the test pre-loaded as
-    canned responses.  Methods raise [`AssertionError`][] if called
-    without a recorded response — the test then knows it forgot to
-    mock that path.
-    """
+    """Records typed calls and returns canned responses for the proxy's bind path."""
 
     def __init__(self, *, session_id: str = "be-1") -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.session_id = session_id
 
     async def initialize(self, **kw: Any) -> InitializeResponse:
-        """Record + return a minimal-shape response."""
         self.calls.append(("initialize", kw))
         return InitializeResponse(protocol_version=kw["protocol_version"])
 
     async def new_session(self, **kw: Any) -> NewSessionResponse:
-        """Record + return a synthetic session id."""
         self.calls.append(("new_session", kw))
         return NewSessionResponse(session_id=self.session_id)
 
     async def set_session_model(self, **kw: Any) -> SetSessionModelResponse:
-        """Record + return an empty-body response."""
         self.calls.append(("set_session_model", kw))
         return SetSessionModelResponse()
 
     async def prompt(self, **kw: Any) -> PromptResponse:
-        """Record + return a canned stop response."""
         self.calls.append(("prompt", kw))
         return PromptResponse(stop_reason="end_turn")
 
     async def cancel(self, **kw: Any) -> None:
-        """Record only — cancel is a notification (no reply)."""
         self.calls.append(("cancel", kw))
 
     async def set_config_option(self, **kw: Any) -> SetSessionConfigOptionResponse:
-        """Record + return a response that echoes a bare-id model option.
-
-        Lets the proxy's post-bind ``namespace_model_options_in_place``
-        rewrite be observed end-to-end.
-        """
+        # Echoes a bare-id model option so the proxy's post-bind
+        # ``namespace_model_options_in_place`` rewrite is observable
+        # end-to-end.
         self.calls.append(("set_config_option", kw))
         return SetSessionConfigOptionResponse(
             config_options=[
@@ -189,7 +180,7 @@ class TestSessionNew:
         asyncio.run(proxy.new_session(cwd="/x", mcp_servers=[]))
         with pytest.raises(RequestError) as exc:
             asyncio.run(proxy.new_session(cwd="/x", mcp_servers=[]))
-        assert exc.value.code == -32600
+        assert exc.value.code == _JSONRPC_INVALID_REQUEST
 
     def test_remembers_default_for_lazy_bind(self) -> None:
         """The first listed model is the lazy-bind default for prompts."""
@@ -209,7 +200,7 @@ class TestSetModelPreBind:
             asyncio.run(
                 proxy.set_session_model(model_id="no-namespace", session_id=CLIENT_SESSION_ID)
             )
-        assert exc.value.code == -32602
+        assert exc.value.code == _JSONRPC_INVALID_PARAMS
 
 
 class TestSetConfigOptionPreBind:
@@ -227,7 +218,7 @@ class TestSetConfigOptionPreBind:
                     value="no-namespace",
                 )
             )
-        assert exc.value.code == -32602
+        assert exc.value.code == _JSONRPC_INVALID_PARAMS
 
     def test_non_model_category_pre_bind_errors(self) -> None:
         """Pre-bind ``set_config_option`` for a non-model knob has no backend."""
@@ -241,7 +232,7 @@ class TestSetConfigOptionPreBind:
                     value="strict",
                 )
             )
-        assert exc.value.code == -32600
+        assert exc.value.code == _JSONRPC_INVALID_REQUEST
 
 
 class TestPromptLazyBindGate:
@@ -253,7 +244,7 @@ class TestPromptLazyBindGate:
         asyncio.run(proxy.new_session(cwd="/x", mcp_servers=[]))
         with pytest.raises(RequestError) as exc:
             asyncio.run(proxy.prompt(prompt=[], session_id=CLIENT_SESSION_ID))
-        assert exc.value.code == -32600
+        assert exc.value.code == _JSONRPC_INVALID_REQUEST
 
 
 class TestBind:
@@ -306,7 +297,7 @@ class TestBind:
                 await proxy.set_session_model(
                     model_id="codex:gpt-5.5", session_id=CLIENT_SESSION_ID
                 )
-            assert exc.value.code == -32602
+            assert exc.value.code == _JSONRPC_INVALID_PARAMS
 
         asyncio.run(_drive())
 

@@ -28,7 +28,13 @@ from acp.schema import (
 )
 
 MODEL_OPTION_CATEGORY = "model"
-"""ACP semantic category for the model selector configOption."""
+"""ACP semantic category for the model selector configOption.
+
+Used as both the ``category`` and the ``id`` field of the
+[`SessionConfigOptionSelect`][acp.schema.SessionConfigOptionSelect] we
+build — keeping them in sync prevents drift between the discriminator
+the proxy emits and the one downstream code matches on.
+"""
 
 MODEL_NAMESPACE_SEP = ":"
 """Separator between agent and model in the namespaced id (e.g.
@@ -44,16 +50,28 @@ def humanise_model_id(namespaced: str) -> str:
     provider plus one slash-bearing model id.  Forwards verbatim if the
     input isn't a namespaced pair.
     """
-    agent, _, model = namespaced.partition(MODEL_NAMESPACE_SEP)
+    agent, model = split_namespaced(namespaced)
     if not agent or not model:
         return namespaced
     return f"{agent.capitalize()}: {model}"
 
 
+def split_namespaced(namespaced: str) -> tuple[str, str]:
+    """Split ``agent:model`` into ``(agent, model)``.
+
+    Empty halves signal a malformed id — callers that need to validate
+    do so by checking both halves.  Centralises the partition so the
+    proxy's bind/lookup paths stop spelling
+    ``.partition(MODEL_NAMESPACE_SEP)`` themselves.
+    """
+    agent, _, model = namespaced.partition(MODEL_NAMESPACE_SEP)
+    return agent, model
+
+
 def build_model_option(namespaced_models: list[str], *, current: str) -> SessionConfigOptionSelect:
     """Build a ``category: "model"`` select option with namespaced ids."""
     return SessionConfigOptionSelect(
-        id="model",
+        id=MODEL_OPTION_CATEGORY,
         name="Model",
         type="select",
         description="AI model to use",
@@ -104,17 +122,23 @@ def namespace_model_options_in_place(
         return
     prefix = f"{bound_agent}{MODEL_NAMESPACE_SEP}"
     for opt in config_options:
-        if not isinstance(opt, SessionConfigOptionSelect):
-            continue
-        if opt.category != MODEL_OPTION_CATEGORY and opt.id != MODEL_OPTION_CATEGORY:
-            continue
-        if MODEL_NAMESPACE_SEP not in opt.current_value:
-            opt.current_value = prefix + opt.current_value
-        for entry in opt.options:
-            if isinstance(entry, SessionConfigSelectOption):
-                if MODEL_NAMESPACE_SEP not in entry.value:
-                    entry.value = prefix + entry.value
-            elif isinstance(entry, SessionConfigSelectGroup):
-                for sub in entry.options:
-                    if MODEL_NAMESPACE_SEP not in sub.value:
-                        sub.value = prefix + sub.value
+        if isinstance(opt, SessionConfigOptionSelect) and opt.category == MODEL_OPTION_CATEGORY:
+            _namespace_select_in_place(opt, prefix)
+
+
+def _namespace_select_in_place(opt: SessionConfigOptionSelect, prefix: str) -> None:
+    """Apply *prefix* to the select's current value and every option value."""
+    if MODEL_NAMESPACE_SEP not in opt.current_value:
+        opt.current_value = prefix + opt.current_value
+    for entry in opt.options:
+        if isinstance(entry, SessionConfigSelectOption):
+            _maybe_prefix(entry, prefix)
+        elif isinstance(entry, SessionConfigSelectGroup):
+            for sub in entry.options:
+                _maybe_prefix(sub, prefix)
+
+
+def _maybe_prefix(entry: SessionConfigSelectOption, prefix: str) -> None:
+    """Add *prefix* to ``entry.value`` unless it already carries it."""
+    if MODEL_NAMESPACE_SEP not in entry.value:
+        entry.value = prefix + entry.value

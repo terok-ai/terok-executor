@@ -50,13 +50,6 @@ from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
 from acp import PROTOCOL_VERSION, RequestError, spawn_agent_process
-
-# Canonical submodule paths — the top-level ``acp.AgentSideConnection`` /
-# ``acp.ClientSideConnection`` aliases are deprecated for direct import.
-# ``acp.run_agent`` is the recommended replacement for the agent side but
-# it doesn't return the connection handle, which we need to forward
-# backend → client traffic through the typed ``session_update`` /
-# ``request_permission`` / ``fs_*`` / ``terminal_*`` methods.
 from acp.agent.connection import AgentSideConnection
 from acp.client.connection import ClientSideConnection
 from acp.schema import (
@@ -101,11 +94,11 @@ from acp.schema import (
 )
 
 from .model_options import (
-    MODEL_NAMESPACE_SEP,
     MODEL_OPTION_CATEGORY,
     build_aggregated_session_new,
     build_model_option,
     namespace_model_options_in_place,
+    split_namespaced,
 )
 
 if TYPE_CHECKING:
@@ -131,9 +124,10 @@ binary not found …".  Pinning to the container's workspace mount is a
 stopgap until the host↔sandbox path strategy lands.
 """
 
-# Type alias for the session_update union — used in both Agent and Client
-# protocol method signatures.  Spelled out to satisfy the structural
-# typing check against [`acp.Client`][acp.Client].
+PROXY_AGENT_NAME = "terok-acp"
+PROXY_AGENT_TITLE = "Terok ACP host-proxy"
+PROXY_AGENT_VERSION = "1"
+
 SessionUpdatePayload = (
     UserMessageChunk
     | AgentMessageChunk
@@ -173,8 +167,9 @@ class ACPProxy:
         self._bind_lock = asyncio.Lock()
         self._bound_agent: str | None = None
         self._backend_session_id: str | None = None
-        self._client_session_new_params: dict[str, Any] = {}
+        self._client_mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None = None
         self._client_capabilities: ClientCapabilities | None = None
+        self._aggregated_models: list[str] = []
         # Namespaced ``agent:model`` advertised as ``currentModelId`` in
         # ``session/new``.  Lazy-bind target for clients that go straight
         # from ``session/new`` to ``session/prompt`` without an explicit
@@ -219,7 +214,9 @@ class ACPProxy:
         self._client_capabilities = client_capabilities or ClientCapabilities()
         return InitializeResponse(
             protocol_version=PROTOCOL_VERSION,
-            agent_info=Implementation(name="terok-acp", title="Terok ACP host-proxy", version="1"),
+            agent_info=Implementation(
+                name=PROXY_AGENT_NAME, title=PROXY_AGENT_TITLE, version=PROXY_AGENT_VERSION
+            ),
         )
 
     async def new_session(
@@ -236,19 +233,16 @@ class ACPProxy:
         exists.  The real backend session id is captured on bind and
         translated on every forwarded frame.
         """
+        del cwd, additional_directories
         if self._session_announced:
             raise RequestError.invalid_request(
                 {"details": "proxy supports one session per connection (v1)"}
             )
         self._session_announced = True
-        self._client_session_new_params = {
-            "cwd": cwd,
-            "mcp_servers": mcp_servers,
-            "additional_directories": additional_directories,
-        }
-        models = await self._roster.list_available_agents()
-        self._default_namespaced = models[0] if models else None
-        return build_aggregated_session_new(CLIENT_SESSION_ID, models)
+        self._client_mcp_servers = mcp_servers
+        self._aggregated_models = await self._roster.list_available_agents()
+        self._default_namespaced = self._aggregated_models[0] if self._aggregated_models else None
+        return build_aggregated_session_new(CLIENT_SESSION_ID, self._aggregated_models)
 
     async def set_session_model(
         self, model_id: str, session_id: str, **_kw: Any
@@ -272,8 +266,7 @@ class ACPProxy:
         del session_id
         if config_id == MODEL_OPTION_CATEGORY and isinstance(value, str):
             await self._select_model(value)
-            current = await self._roster.list_available_agents()
-            opt = build_model_option(current, current=value)
+            opt = build_model_option(self._aggregated_models, current=value)
             return SetSessionConfigOptionResponse(config_options=[opt])
         backend, backend_session = self._require_bound()
         resp = await backend.set_config_option(
@@ -411,10 +404,9 @@ class ACPProxy:
     ) -> None:
         """Rewrite session id and any model ids, then forward to the client."""
         del session_id
-        assert self._client is not None
         if isinstance(update, ConfigOptionUpdate) and self._bound_agent is not None:
             namespace_model_options_in_place(update.config_options, self._bound_agent)
-        await self._client.session_update(session_id=CLIENT_SESSION_ID, update=update)
+        await self._require_client().session_update(session_id=CLIENT_SESSION_ID, update=update)
 
     async def request_permission(
         self,
@@ -425,8 +417,7 @@ class ACPProxy:
     ) -> RequestPermissionResponse:
         """Forward permission request to the connected client."""
         del session_id
-        assert self._client is not None
-        return await self._client.request_permission(
+        return await self._require_client().request_permission(
             options=options, session_id=CLIENT_SESSION_ID, tool_call=tool_call
         )
 
@@ -440,8 +431,7 @@ class ACPProxy:
     ) -> ReadTextFileResponse:
         """Forward fs read to the connected client."""
         del session_id
-        assert self._client is not None
-        return await self._client.read_text_file(
+        return await self._require_client().read_text_file(
             path=path, session_id=CLIENT_SESSION_ID, limit=limit, line=line
         )
 
@@ -450,8 +440,7 @@ class ACPProxy:
     ) -> WriteTextFileResponse | None:
         """Forward fs write to the connected client."""
         del session_id
-        assert self._client is not None
-        return await self._client.write_text_file(
+        return await self._require_client().write_text_file(
             content=content, path=path, session_id=CLIENT_SESSION_ID
         )
 
@@ -467,8 +456,7 @@ class ACPProxy:
     ) -> CreateTerminalResponse:
         """Forward terminal create to the connected client."""
         del session_id
-        assert self._client is not None
-        return await self._client.create_terminal(
+        return await self._require_client().create_terminal(
             command=command,
             session_id=CLIENT_SESSION_ID,
             args=args,
@@ -482,8 +470,7 @@ class ACPProxy:
     ) -> TerminalOutputResponse:
         """Forward terminal output read to the connected client."""
         del session_id
-        assert self._client is not None
-        return await self._client.terminal_output(
+        return await self._require_client().terminal_output(
             session_id=CLIENT_SESSION_ID, terminal_id=terminal_id
         )
 
@@ -492,8 +479,7 @@ class ACPProxy:
     ) -> ReleaseTerminalResponse | None:
         """Forward terminal release to the connected client."""
         del session_id
-        assert self._client is not None
-        return await self._client.release_terminal(
+        return await self._require_client().release_terminal(
             session_id=CLIENT_SESSION_ID, terminal_id=terminal_id
         )
 
@@ -502,8 +488,7 @@ class ACPProxy:
     ) -> WaitForTerminalExitResponse:
         """Forward wait-for-exit to the connected client."""
         del session_id
-        assert self._client is not None
-        return await self._client.wait_for_terminal_exit(
+        return await self._require_client().wait_for_terminal_exit(
             session_id=CLIENT_SESSION_ID, terminal_id=terminal_id
         )
 
@@ -512,8 +497,7 @@ class ACPProxy:
     ) -> KillTerminalResponse | None:
         """Forward kill to the connected client."""
         del session_id
-        assert self._client is not None
-        return await self._client.kill_terminal(
+        return await self._require_client().kill_terminal(
             session_id=CLIENT_SESSION_ID, terminal_id=terminal_id
         )
 
@@ -528,7 +512,7 @@ class ACPProxy:
           doesn't carry the multi-backend session bookkeeping that would
           allow them.
         """
-        agent_id, _, model_id = namespaced.partition(MODEL_NAMESPACE_SEP)
+        agent_id, model_id = split_namespaced(namespaced)
         if not agent_id or not model_id:
             raise RequestError.invalid_params(
                 {"details": f"model id must be 'agent:model', got {namespaced!r}"}
@@ -560,7 +544,7 @@ class ACPProxy:
                         "details": "no agent available — none of the configured wrappers probed successfully"
                     }
                 )
-            agent_id, _, model_id = self._default_namespaced.partition(MODEL_NAMESPACE_SEP)
+            agent_id, model_id = split_namespaced(self._default_namespaced)
             await self._bind(agent_id, model_id)
 
     async def _bind(self, agent_id: str, model_id: str) -> None:
@@ -582,7 +566,7 @@ class ACPProxy:
             )
             new_resp = await backend.new_session(
                 cwd=CONTAINER_WORKSPACE,
-                mcp_servers=self._client_session_new_params.get("mcp_servers") or [],
+                mcp_servers=self._client_mcp_servers or [],
             )
             self._backend_session_id = new_resp.session_id
             await backend.set_session_model(model_id=model_id, session_id=self._backend_session_id)
@@ -617,3 +601,16 @@ class ACPProxy:
         if self._backend is None or self._backend_session_id is None:
             raise RequestError.invalid_request({"details": "no agent bound — pick a model first"})
         return self._backend, self._backend_session_id
+
+    def _require_client(self) -> AgentSideConnection:
+        """Return the connected-client wrapper or raise (unreachable in practice).
+
+        [`run`][terok_executor.acp.proxy.ACPProxy.run] sets ``self._client``
+        before [`listen`][acp.agent.connection.AgentSideConnection.listen]
+        starts dispatching frames, so Client-side forwarders only run after
+        ``_client`` is set — but mypy doesn't know that.  The runtime check
+        costs a comparison; the alternative is one ``assert`` per forwarder.
+        """
+        if self._client is None:
+            raise RuntimeError("proxy used before run() — client side not wired")
+        return self._client
