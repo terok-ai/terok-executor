@@ -104,7 +104,6 @@ from .doctor import agent_doctor_checks
 from .krun import (
     KrunHostKeypair,
     ensure_krun_host_keypair,
-    host_upstream_dns,
     krun_launch_args,
     make_krun_runtime,
 )
@@ -282,7 +281,6 @@ __all__ = [
     # Krun (KVM-microVM) provisioning + runtime factory
     "KrunHostKeypair",
     "ensure_krun_host_keypair",
-    "host_upstream_dns",
     "krun_launch_args",
     "make_krun_runtime",
 ]

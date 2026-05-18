@@ -29,7 +29,6 @@ the key is a contradiction, so the two operations belong together.
 from __future__ import annotations
 
 import dataclasses
-import ipaddress
 import os
 import stat
 import tempfile
@@ -50,11 +49,16 @@ from terok_sandbox import (
 # touches one place.
 _HOST_KEYPAIR_BASENAME = "krun_host"
 
-# systemd-resolved publishes the real upstream nameservers here.  The
-# usual ``/etc/resolv.conf`` only carries the ``127.0.0.53`` stub,
-# which is unreachable from inside the krun guest's loopback (TSI does
-# not redirect 127.0.0.0/8 back to the host).
-_SYSTEMD_RESOLVED_REAL_CONF = Path("/run/systemd/resolve/resolv.conf")
+# Pasta's built-in link-local DNS forwarder.  Inside a krun guest this
+# is the only resolver address that's both (a) reachable — TSI surfaces
+# the connect to a host-side socket inside the podman netns where pasta
+# answers it — and (b) permitted by terok-shield's nft policy, which
+# allows udp/tcp :53 to exactly this address (see
+# ``terok_shield.nft.constants.PASTA_DNS``).  Hardcoded rather than
+# imported: shield isn't an executor dependency, and the address is a
+# pasta-defined constant that's effectively stable.  Slirp4netns hosts
+# (``10.0.2.3``) aren't supported for krun yet.
+_PASTA_DNS_FORWARDER = "169.254.1.1"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -170,9 +174,9 @@ def krun_launch_args(*, cfg: SandboxConfig | None = None) -> list[str]:
 
     Four things that all reach across the orchestrator/runtime boundary
     into executor's domain — the L0 image, the host keypair, the
-    in-guest ``init-ssh-and-repo.sh``, and DNS reachability inside the
-    microVM — so they live here together rather than being open-coded
-    in terok's ``_project_runtime_flags``:
+    in-guest ``init-ssh-and-repo.sh``, and the DNS forwarder address —
+    so they live here together rather than being open-coded in terok's
+    ``_project_runtime_flags``:
 
     - Bind-mount the live host pubkey over the L0's empty placeholder
       at ``/etc/ssh/authorized_keys.d/terok``.  ``z`` is the shared
@@ -185,64 +189,29 @@ def krun_launch_args(*, cfg: SandboxConfig | None = None) -> list[str]:
       authenticated user on connection.  ``USER dev`` is the right
       default under crun (AI agents that refuse uid 0); under krun the
       session uid comes from which ``ssh user@…`` the operator picks.
-    - ``--dns <host-upstream>`` so the guest's resolver is reachable.
-      See [`host_upstream_dns`][terok_executor.krun.host_upstream_dns]
-      for the detection contract; skipped when no non-loopback resolver
-      can be found (operator must add ``--dns`` themselves or accept
-      broken name resolution under krun).
+    - ``--dns 169.254.1.1`` so the guest resolves through pasta's
+      forwarder rather than the unreachable host-loopback stub.  Same
+      address terok-shield's nft already permits :53 to, so this works
+      under both shield-up and shield-down — the only behavioural cost
+      under shield-up is losing dnsmasq's clearance prompts (queries
+      bypass it).  Documented limitation for the experimental krun
+      runtime; will be revisited when shield+krun gets first-class
+      support.
 
     Doesn't include ``--runtime krun`` itself or krun's microVM-sizing
     annotations — those are orchestrator-level decisions terok keeps.
     """
     kp = ensure_krun_host_keypair(cfg=cfg)
-    args = [
+    return [
         "-v",
         f"{kp.public_path}:/etc/ssh/authorized_keys.d/terok:ro,z",
         "-e",
         "TEROK_CONTAINER_RUNTIME=krun",
         "--user",
         "root",
+        "--dns",
+        _PASTA_DNS_FORWARDER,
     ]
-    if dns := host_upstream_dns():
-        args += ["--dns", dns]
-    return args
-
-
-def host_upstream_dns() -> str | None:
-    """Return the host's first non-loopback DNS resolver, or ``None``.
-
-    Krun guests can't reach a host-loopback resolver: libkrun's TSI
-    proxies AF_INET sockets to the host VMM but does not redirect
-    127.0.0.0/8 traffic back to the host's network stack — a guest
-    connect to ``127.0.0.53`` hits the (empty) guest loopback instead
-    of systemd-resolved.  Surface the *real* upstream nameserver so
-    the orchestrator can pass it via ``podman run --dns``.
-
-    Source order: ``/run/systemd/resolve/resolv.conf`` first (real
-    upstreams on systemd-resolved hosts — the usual F44 case), then
-    ``/etc/resolv.conf`` (non-resolved hosts).  Loopback entries
-    are skipped using
-    [`ipaddress.ip_address.is_loopback`][ipaddress.IPv4Address.is_loopback]
-    so IPv6 ``::1`` is excluded too.  Returns ``None`` when neither
-    source yields a routable resolver — the caller decides whether
-    that's fatal or merely a documented limitation.
-    """
-    for source in (_SYSTEMD_RESOLVED_REAL_CONF, Path("/etc/resolv.conf")):
-        try:
-            text = source.read_text()
-        except OSError:
-            continue
-        for line in text.splitlines():
-            tokens = line.split()
-            if len(tokens) < 2 or tokens[0] != "nameserver":
-                continue
-            try:
-                addr = ipaddress.ip_address(tokens[1])
-            except ValueError:
-                continue
-            if not addr.is_loopback:
-                return tokens[1]
-    return None
 
 
 # ── Private helpers ─────────────────────────────────────────────────────────
