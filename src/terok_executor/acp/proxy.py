@@ -143,14 +143,6 @@ SessionUpdatePayload = (
 )
 
 
-class AgentBindError(RuntimeError):
-    """Surface error raised when the proxy fails to bind a backend agent.
-
-    Always converted to a JSON-RPC error response on the wire — never
-    bubbles to the caller of [`run`][terok_executor.acp.proxy.ACPProxy.run].
-    """
-
-
 class ACPProxy:
     """One client connection's worth of proxy state.
 
@@ -614,3 +606,11 @@ class ACPProxy:
         if self._client is None:
             raise RuntimeError("proxy used before run() — client side not wired")
         return self._client
+
+
+class AgentBindError(RuntimeError):
+    """Surface error raised when the proxy fails to bind a backend agent.
+
+    Always converted to a JSON-RPC error response on the wire — never
+    bubbles to the caller of [`run`][terok_executor.acp.proxy.ACPProxy.run].
+    """

@@ -1,19 +1,19 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Model-roster probe for in-container ACP agents.
+"""Discover the models an in-container ACP agent advertises.
 
 Each in-container agent ships an ACP wrapper script (``terok-{agent}-acp``)
-that exposes the agent over JSON-RPC on stdio.  To learn which models an
-agent currently advertises, we drive a minimal handshake:
+that exposes the agent over JSON-RPC on stdio.  To learn which models
+the wrapper currently advertises, drive a minimal handshake:
 
 1. ``initialize`` — version negotiation
 2. ``session/new`` — receive the ``models`` block
 3. close stdin — agent exits cleanly
 
-The handshake is cheap but non-trivial to repeat; the result is cached by
-[`AgentRosterCache`][terok_executor.acp.cache.AgentRosterCache] and reused
-for the lifetime of the authenticated session.
+The handshake is cheap but non-trivial to repeat; the result is cached
+by [`AgentRosterCache`][terok_executor.acp.cache.AgentRosterCache] and
+reused for the lifetime of the authenticated session.
 
 The probe spawns the wrapper directly via the ACP SDK's
 [`spawn_agent_process`][acp.spawn_agent_process].  Argv is supplied by
@@ -42,19 +42,43 @@ that a fully-unauthed image doesn't make the user wait ten seconds for
 a model picker.  Override per call with the ``timeout`` parameter."""
 
 
-class ProbeError(RuntimeError):
-    """Raised when an agent fails to respond to the probe handshake.
+async def probe_agent_models(
+    *,
+    agent_id: str,
+    wrapper_argv: list[str],
+    timeout: float = DEFAULT_PROBE_TIMEOUT_SEC,
+    cwd: str = "/workspace",
+) -> tuple[str, ...]:
+    """Drive the minimal ACP handshake against ``terok-{agent_id}-acp``.
 
-    The cache stores empty rosters for failed probes (so we don't hammer
-    a misconfigured agent on every session) — callers should treat
-    ``ProbeError`` as "this agent is currently unusable" rather than
-    bubble it to the user.
+    Spawns the wrapper via [`spawn_agent_process`][acp.spawn_agent_process]
+    (which owns the asyncio stdio bridging and the graceful subprocess
+    shutdown dance), sends ``initialize`` and ``session/new``, reads
+    the ``models`` block, and returns the bare model ids.
+
+    Raises [`ProbeError`][terok_executor.acp.probe.ProbeError] on
+    timeout, transport failure, or any handshake error.  Callers (the
+    roster cache) typically catch it, cache an empty roster, and skip
+    the agent until the container is restarted.
     """
+    command, *args = wrapper_argv
+    try:
+        async with asyncio.timeout(timeout):
+            async with spawn_agent_process(_ProbeClient(), command, *args) as (client, _proc):
+                await client.initialize(
+                    protocol_version=PROTOCOL_VERSION,
+                    client_capabilities=ClientCapabilities(),
+                )
+                resp = await client.new_session(cwd=cwd, mcp_servers=[])
+    except TimeoutError as exc:
+        _logger.warning("ACP probe for agent %r timed out after %.1fs", agent_id, timeout)
+        raise ProbeError(f"probe timed out for agent {agent_id!r}") from exc
+    except Exception as exc:
+        raise ProbeError(f"probe failed for agent {agent_id!r}: {exc}") from exc
 
-
-def _not_supported_during_probe(method: str) -> NoReturn:
-    """Fail-fast helper for [`_ProbeClient`][terok_executor.acp.probe._ProbeClient]."""
-    raise RequestError.method_not_found(method)
+    if resp.models is None:
+        return ()
+    return tuple(m.model_id for m in resp.models.available_models)
 
 
 class _ProbeClient:
@@ -117,40 +141,16 @@ class _ProbeClient:
         return None
 
 
-async def probe_agent_models(
-    *,
-    agent_id: str,
-    wrapper_argv: list[str],
-    timeout: float = DEFAULT_PROBE_TIMEOUT_SEC,
-    cwd: str = "/workspace",
-) -> tuple[str, ...]:
-    """Drive the minimal ACP handshake against ``terok-{agent_id}-acp``.
+def _not_supported_during_probe(method: str) -> NoReturn:
+    """Fail-fast helper for [`_ProbeClient`][terok_executor.acp.probe._ProbeClient]."""
+    raise RequestError.method_not_found(method)
 
-    Spawns the wrapper via [`spawn_agent_process`][acp.spawn_agent_process]
-    (which owns the asyncio stdio bridging and the graceful subprocess
-    shutdown dance), sends ``initialize`` and ``session/new``, reads
-    the ``models`` block, and returns the bare model ids.
 
-    Raises [`ProbeError`][terok_executor.acp.probe.ProbeError] on timeout,
-    transport failure, or any handshake error.  Callers (the roster
-    cache) typically catch it, cache an empty roster, and skip the
-    agent until the container is restarted.
+class ProbeError(RuntimeError):
+    """Raised when an agent fails to respond to the probe handshake.
+
+    The cache stores empty rosters for failed probes (so we don't hammer
+    a misconfigured agent on every session) — callers should treat
+    ``ProbeError`` as "this agent is currently unusable" rather than
+    bubble it to the user.
     """
-    command, *args = wrapper_argv
-    try:
-        async with asyncio.timeout(timeout):
-            async with spawn_agent_process(_ProbeClient(), command, *args) as (client, _proc):
-                await client.initialize(
-                    protocol_version=PROTOCOL_VERSION,
-                    client_capabilities=ClientCapabilities(),
-                )
-                resp = await client.new_session(cwd=cwd, mcp_servers=[])
-    except TimeoutError as exc:
-        _logger.warning("ACP probe for agent %r timed out after %.1fs", agent_id, timeout)
-        raise ProbeError(f"probe timed out for agent {agent_id!r}") from exc
-    except Exception as exc:
-        raise ProbeError(f"probe failed for agent {agent_id!r}: {exc}") from exc
-
-    if resp.models is None:
-        return ()
-    return tuple(m.model_id for m in resp.models.available_models)

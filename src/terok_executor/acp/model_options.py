@@ -1,18 +1,26 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Vocabulary and typed builders for ACP's model selector.
+"""Aggregate and namespace ACP model selectors for the host proxy.
 
-The host proxy hides multiple in-container agents behind a single ACP
+The proxy hides multiple in-container agents behind a single ACP
 endpoint by namespacing each agent's model ids as ``agent:model``.
-This module owns three things on top of the ACP SDK's pydantic models:
+Three operations live here, layered on top of the ACP SDK's pydantic
+models:
 
-- the namespace separator and the human-readable label rendering,
-- the pre-bind ``session/new`` aggregate builder ([`build_aggregated_session_new`][terok_executor.acp.model_options.build_aggregated_session_new]),
-- the post-bind in-place rewrite that puts the ``agent:`` prefix back on
-  the bare model ids a bound backend emits in
-  ``configOptions[category=model]``
-  ([`namespace_model_options_in_place`][terok_executor.acp.model_options.namespace_model_options_in_place]).
+- [`build_aggregated_session_new`][terok_executor.acp.model_options.build_aggregated_session_new]
+  — the pre-bind ``session/new`` reply that advertises the union of
+  every authenticated agent's models under one selector.
+- [`build_model_option`][terok_executor.acp.model_options.build_model_option]
+  — the ``configOptions[category=model]`` entry that mirrors the
+  aggregate selector for clients that read it instead of ``models``.
+- [`namespace_model_options_in_place`][terok_executor.acp.model_options.namespace_model_options_in_place]
+  — the post-bind rewrite that puts the ``agent:`` prefix back on the
+  bare model ids a bound backend emits in its own config options.
+
+Plus the small vocabulary helpers ([`split_namespaced`][terok_executor.acp.model_options.split_namespaced],
+[`humanise_model_id`][terok_executor.acp.model_options.humanise_model_id])
+that callers across the proxy share.
 """
 
 from __future__ import annotations
@@ -42,30 +50,27 @@ MODEL_NAMESPACE_SEP = ":"
 OpenRouter-style ids like ``anthropic/claude-opus-4``."""
 
 
-def humanise_model_id(namespaced: str) -> str:
-    """Render ``claude:opus-4.6`` as ``Claude: opus-4.6`` for the picker.
+def build_aggregated_session_new(session_id: str, models: list[str]) -> NewSessionResponse:
+    """Build the pre-bind ``session/new`` reply for *models*.
 
-    Colon matches the wire-level [`MODEL_NAMESPACE_SEP`][terok_executor.acp.model_options.MODEL_NAMESPACE_SEP]
-    so an OpenCode-style ``opencode:opencode/big-pickle`` reads as one
-    provider plus one slash-bearing model id.  Forwards verbatim if the
-    input isn't a namespaced pair.
+    Empty *models* yields a schema-valid response with no ``models`` or
+    ``configOptions`` block — both have non-nullable required fields the
+    proxy can't fill in for an empty list, and modelling "no models" as
+    an empty selector trips client validation.
     """
-    agent, model = split_namespaced(namespaced)
-    if not agent or not model:
-        return namespaced
-    return f"{agent.capitalize()}: {model}"
-
-
-def split_namespaced(namespaced: str) -> tuple[str, str]:
-    """Split ``agent:model`` into ``(agent, model)``.
-
-    Empty halves signal a malformed id — callers that need to validate
-    do so by checking both halves.  Centralises the partition so the
-    proxy's bind/lookup paths stop spelling
-    ``.partition(MODEL_NAMESPACE_SEP)`` themselves.
-    """
-    agent, _, model = namespaced.partition(MODEL_NAMESPACE_SEP)
-    return agent, model
+    if not models:
+        return NewSessionResponse(session_id=session_id)
+    current = models[0]
+    return NewSessionResponse(
+        session_id=session_id,
+        models=SessionModelState(
+            available_models=[
+                ModelInfo(model_id=ident, name=humanise_model_id(ident)) for ident in models
+            ],
+            current_model_id=current,
+        ),
+        config_options=[build_model_option(models, current=current)],
+    )
 
 
 def build_model_option(namespaced_models: list[str], *, current: str) -> SessionConfigOptionSelect:
@@ -84,33 +89,11 @@ def build_model_option(namespaced_models: list[str], *, current: str) -> Session
     )
 
 
-def build_aggregated_session_new(session_id: str, models: list[str]) -> NewSessionResponse:
-    """Construct the pre-bind ``session/new`` reply for *models*.
-
-    Empty *models* yields a schema-valid response with no ``models`` or
-    ``configOptions`` block (both have non-nullable required fields the
-    proxy can't fill in for an empty list).
-    """
-    if not models:
-        return NewSessionResponse(session_id=session_id)
-    current = models[0]
-    return NewSessionResponse(
-        session_id=session_id,
-        models=SessionModelState(
-            available_models=[
-                ModelInfo(model_id=ident, name=humanise_model_id(ident)) for ident in models
-            ],
-            current_model_id=current,
-        ),
-        config_options=[build_model_option(models, current=current)],
-    )
-
-
 def namespace_model_options_in_place(
     config_options: list[SessionConfigOptionSelect | SessionConfigOptionBoolean] | None,
     bound_agent: str,
 ) -> None:
-    """Mutate any ``category: "model"`` select so values become ``agent:value``.
+    """Prefix bare model ids in *config_options* with ``bound_agent:``.
 
     Used on every backend → client frame that carries
     ``configOptions[*]`` post-bind (``ConfigOptionUpdate`` notification,
@@ -142,3 +125,29 @@ def _maybe_prefix(entry: SessionConfigSelectOption, prefix: str) -> None:
     """Add *prefix* to ``entry.value`` unless it already carries it."""
     if MODEL_NAMESPACE_SEP not in entry.value:
         entry.value = prefix + entry.value
+
+
+def split_namespaced(namespaced: str) -> tuple[str, str]:
+    """Split ``agent:model`` into ``(agent, model)``.
+
+    Empty halves signal a malformed id — callers that need to validate
+    do so by checking both halves.  Centralises the partition so the
+    proxy's bind/lookup paths stop spelling
+    ``.partition(MODEL_NAMESPACE_SEP)`` themselves.
+    """
+    agent, _, model = namespaced.partition(MODEL_NAMESPACE_SEP)
+    return agent, model
+
+
+def humanise_model_id(namespaced: str) -> str:
+    """Render ``claude:opus-4.6`` as ``Claude: opus-4.6`` for the picker.
+
+    Colon matches the wire-level [`MODEL_NAMESPACE_SEP`][terok_executor.acp.model_options.MODEL_NAMESPACE_SEP]
+    so an OpenCode-style ``opencode:opencode/big-pickle`` reads as one
+    provider plus one slash-bearing model id.  Forwards verbatim if the
+    input isn't a namespaced pair.
+    """
+    agent, model = split_namespaced(namespaced)
+    if not agent or not model:
+        return namespaced
+    return f"{agent.capitalize()}: {model}"
