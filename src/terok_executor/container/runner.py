@@ -355,12 +355,11 @@ class AgentRunner:
             extra_args: Additional raw ``podman run`` flags (e.g. port publishing).
             hostname: Override the in-container hostname (podman ``--hostname``).
                 When ``None`` (default), podman assigns the short container ID.
-            annotations: OCI annotations forwarded as ``--annotation k=v``.
-                Validated against
-                [`SAFE_ANNOTATION_KEYS`][terok_sandbox.sandbox.SAFE_ANNOTATION_KEYS]
-                — typed channel for orchestrator metadata the shield reads
-                at hook spawn time, distinct from the freeform *extra_args*
-                escape hatch.
+            annotations: OCI annotations forwarded as ``--annotation k=v``;
+                validated against
+                [`SAFE_ANNOTATION_KEYS`][terok_sandbox.sandbox.SAFE_ANNOTATION_KEYS].
+                Typed channel for orchestrator metadata the shield reads,
+                distinct from the freeform *extra_args*.
 
         Returns:
             The container name (same as *name*).
