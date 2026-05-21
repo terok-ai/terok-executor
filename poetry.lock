@@ -3274,9 +3274,8 @@ description = "Hardened Podman container runner with gate server and shield inte
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = [
-    {file = "terok_sandbox-0.0.124a13-py3-none-any.whl", hash = "sha256:0a2cecf6accd55964249eba25ed290b7f74554db403475317059c256983fc7fb"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 aiohttp = ">=3.9"
@@ -3289,11 +3288,13 @@ pydantic = ">=2.9"
 "ruamel.yaml" = ">=0.18"
 sqlcipher3 = ">=0.6.2"
 terok_clearance = {url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.6.14a4/terok_clearance-0.6.14a4-py3-none-any.whl"}
-terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.6.42a4/terok_shield-0.6.42a4-py3-none-any.whl"}
+terok-shield = {git = "https://github.com/sliwowitz/terok-shield.git", rev = "feat/krun-dnsmasq-bind"}
 
 [package.source]
-type = "url"
-url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.124a13/terok_sandbox-0.0.124a13-py3-none-any.whl"
+type = "git"
+url = "https://github.com/sliwowitz/terok-sandbox.git"
+reference = "feat/shield-runtime-thread"
+resolved_reference = "cd7454499ef1615c56953cf64c9783a54eacc13b"
 
 [[package]]
 name = "terok-shield"
@@ -3302,17 +3303,18 @@ description = "nftables-based egress firewalling for Podman containers"
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = [
-    {file = "terok_shield-0.6.42a4-py3-none-any.whl", hash = "sha256:4d9751f814785ac202944a10239dadbde352e2e814e9509b56d5393a06870a08"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 pydantic = ">=2.0"
 PyYAML = ">=6.0"
 
 [package.source]
-type = "url"
-url = "https://github.com/terok-ai/terok-shield/releases/download/v0.6.42a4/terok_shield-0.6.42a4-py3-none-any.whl"
+type = "git"
+url = "https://github.com/sliwowitz/terok-shield.git"
+reference = "feat/krun-dnsmasq-bind"
+resolved_reference = "e4fd7b9918b3fc930ac42194c607dc0ba0f541cc"
 
 [[package]]
 name = "tomli"
@@ -3711,4 +3713,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "0d7621829e36ec774bfae40178b47226c6acfe63f43cad7dec392b8b27fe1ae1"
+content-hash = "b05b5eb99c5edfbbe6d6b97283248cd71d9c4f3fc24dde59f6d6fc61c495d5ca"
