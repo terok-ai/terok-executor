@@ -3294,7 +3294,7 @@ terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/downloa
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
 reference = "refactor/annotations-repurpose-and-rename"
-resolved_reference = "278a5f686635822019748da356506a85946ff3af"
+resolved_reference = "c86bec289d4b9a6a6571c5e24dd102820502a945"
 
 [[package]]
 name = "terok-shield"
