@@ -33,7 +33,7 @@ class TestStateRoot:
         """Root user gets /var/lib/terok/executor."""
         with (
             unittest.mock.patch.dict(os.environ, {}, clear=True),
-            unittest.mock.patch("terok_sandbox.paths._is_root", return_value=True),
+            unittest.mock.patch("terok_util.paths._is_root", return_value=True),
         ):
             assert paths.state_root() == Path("/var/lib/terok/executor")
 
