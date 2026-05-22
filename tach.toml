@@ -48,7 +48,7 @@ path = "terok_executor.resources"
 depends_on = []
 
 # Container-side vault addressing constants — shared by env builder,
-# config patcher, and doctor.  Depends only on terok_sandbox (external).
+# config patcher, and doctor.  Depends on terok_sandbox symbols via the integrations adapter.
 [[modules]]
 path = "terok_executor.vault_addr"
 depends_on = [
@@ -56,7 +56,7 @@ depends_on = [
 ]
 
 # Global config.yml writers (executor-owned sections — currently image.agents).
-# Depends only on terok_sandbox (external).
+# Depends on terok_sandbox symbols via the integrations adapter.
 [[modules]]
 path = "terok_executor.config"
 depends_on = [

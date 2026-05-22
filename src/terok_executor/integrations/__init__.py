@@ -10,3 +10,8 @@ that.  Convention shared with terok-sandbox (which adapts terok-shield
 and terok-clearance the same way) and terok-main (where the same
 pattern lives at ``terok.lib.integrations.*``).
 """
+
+#: Adapter sub-modules carry the public surface; the package root re-
+#: exports nothing on its own.  Importers reference
+#: ``terok_executor.integrations.sandbox.<symbol>`` explicitly.
+__all__: list[str] = []
