@@ -65,6 +65,7 @@ vulture = ">=2.12"
 reuse = "^6.2.0"
 tach = "^0.35.0"
 mypy = ">=2.1.0,<3.0"
+import-linter = ">=2.1"
 
 [tool.poetry.group.test.dependencies]
 pytest = ">=9.0.3"
