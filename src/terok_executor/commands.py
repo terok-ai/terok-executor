@@ -653,12 +653,13 @@ def _remove_images(base: str) -> None:
 
 def _print_setup_status(base: str) -> None:
     """Render the ``setup --check`` report — per-phase readiness, no fixes."""
-    from .preflight import check_images, check_podman, check_sandbox_services
+    from .preflight import Preflight
 
+    pf = Preflight(provider="claude", base_image=base)
     checks = [
-        check_podman(),
-        check_sandbox_services(),
-        check_images(base),
+        pf.check_podman(),
+        pf.check_sandbox_services(),
+        pf.check_images(),
     ]
     print("\nterok-executor status:\n")
     ok = True
