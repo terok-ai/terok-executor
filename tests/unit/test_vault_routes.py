@@ -360,9 +360,7 @@ class TestVaultCommandHandlers:
     @patch("terok_executor.credentials.vault_commands.scan_leaked_credentials", return_value=[])
     def test_status_prints_info(self, _scan, capsys) -> None:
         """status prints formatted vault info."""
-        status = _fake_status(
-            credentials_stored=("claude", "gh"), passphrase_source="keyring"
-        )
+        status = _fake_status(credentials_stored=("claude", "gh"), passphrase_source="keyring")
         with _patch_vault_manager(get_status=status, is_systemd_available=False):
             from terok_executor.credentials.vault_commands import _handle_status
 
@@ -409,9 +407,7 @@ class TestVaultCommandHandlers:
 
     @patch("terok_executor.integrations.sandbox.systemd_creds_has_tpm2", return_value=True)
     @patch("terok_executor.credentials.vault_commands.scan_leaked_credentials", return_value=[])
-    def test_status_annotates_systemd_creds_with_tpm2_suffix(
-        self, _scan, _tpm2, capsys
-    ) -> None:
+    def test_status_annotates_systemd_creds_with_tpm2_suffix(self, _scan, _tpm2, capsys) -> None:
         """``systemd-creds`` tier + a TPM2 device → ``(+TPM2)`` suffix on the Passphrase line."""
         status = _fake_status(mode="systemd", passphrase_source="systemd-creds")
         with _patch_vault_manager(get_status=status, is_systemd_available=False):
@@ -423,9 +419,7 @@ class TestVaultCommandHandlers:
 
     @patch("terok_executor.integrations.sandbox.systemd_creds_has_tpm2", return_value=False)
     @patch("terok_executor.credentials.vault_commands.scan_leaked_credentials", return_value=[])
-    def test_status_omits_tpm2_suffix_when_unavailable(
-        self, _scan, _tpm2, capsys
-    ) -> None:
+    def test_status_omits_tpm2_suffix_when_unavailable(self, _scan, _tpm2, capsys) -> None:
         """``systemd-creds`` tier + no TPM2 → bare ``resolved via systemd-creds`` line."""
         status = _fake_status(mode="systemd", passphrase_source="systemd-creds")
         with _patch_vault_manager(get_status=status, is_systemd_available=False):
