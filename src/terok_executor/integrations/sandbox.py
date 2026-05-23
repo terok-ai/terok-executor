@@ -8,12 +8,24 @@ Re-export catalog: every ``from terok_sandbox …`` import in
 ``.importlinter`` (``terok_sandbox`` is a protected module with
 ``terok_executor.integrations.sandbox`` as the sole allowed importer).
 
-Cross-cutting helpers that originate in `terok_util` (``CommandDef``
-family, ``namespace_*_dir``, fs helpers, ``ConfigStack``/``deep_merge``,
-``sanitize_tty``, ``podman_userns_args``) are imported directly from
-`terok_util` at every call site — they don't flow through this adapter
-even when the same symbol also happens to exist on ``terok_sandbox``.
-This adapter owns the sandbox-specific surface only.
+Cross-cutting helpers that originate in `terok_util` (the
+[`CommandDef`][terok_util.cli_types.CommandDef] /
+[`ArgDef`][terok_util.cli_types.ArgDef] /
+[`CommandTree`][terok_util.cli_types.CommandTree] family,
+[`namespace_state_dir`][terok_util.paths.namespace_state_dir] /
+[`namespace_config_dir`][terok_util.paths.namespace_config_dir] /
+[`namespace_runtime_dir`][terok_util.paths.namespace_runtime_dir],
+[`ensure_dir`][terok_util.fs.ensure_dir] /
+[`ensure_dir_writable`][terok_util.fs.ensure_dir_writable] /
+[`write_sensitive_file`][terok_util.fs.write_sensitive_file],
+[`ConfigStack`][terok_util.config_stack.ConfigStack] /
+[`deep_merge`][terok_util.config_stack.deep_merge],
+[`sanitize_tty`][terok_util.security.sanitize_tty],
+[`podman_userns_args`][terok_util.podman.podman_userns_args]) are
+imported directly from `terok_util` at every call site — they don't
+flow through this adapter even when the same symbol also happens to
+exist on ``terok_sandbox``.  This adapter owns the sandbox-specific
+surface only.
 
 When a sibling release renames, splits, or relocates a symbol, only
 this file needs to change — the rest of terok-executor keeps reading
