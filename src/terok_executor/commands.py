@@ -156,7 +156,7 @@ def _preflight_or_exit(
     if skip_preflight:
         return True
 
-    from .preflight import run_preflight
+    from .preflight import Preflight
 
     if not sys.stdin.isatty() and not assume_yes:
         print(
@@ -168,9 +168,13 @@ def _preflight_or_exit(
         )
         return False
 
-    return run_preflight(
-        provider, interactive=True, assume_yes=assume_yes, base_image=base, family=family
-    )
+    return Preflight(
+        provider=provider,
+        base_image=base,
+        family=family,
+        interactive=True,
+        assume_yes=assume_yes,
+    ).run()
 
 
 def _resolve_host_git_identity() -> tuple[str | None, str | None]:
