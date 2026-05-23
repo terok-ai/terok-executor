@@ -18,7 +18,7 @@ requires-python = ">=3.12,<3.15"
 dynamic = ["version", "classifiers"]
 dependencies = [
     "terok-sandbox @ https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.124a15/terok_sandbox-0.0.124a15-py3-none-any.whl",
-    "terok-util @ git+https://github.com/sliwowitz/terok-util.git@chore/initial-scaffold",
+    "terok-util @ https://github.com/terok-ai/terok-util/releases/download/v0.0.1/terok_util-0.0.1-py3-none-any.whl",
     "ruamel.yaml>=0.18",
     "Jinja2>=3.1",
     "tomli-w>=1.0",

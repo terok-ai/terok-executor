@@ -10,11 +10,10 @@ Re-export catalog: every ``from terok_sandbox …`` import in
 
 Cross-cutting helpers that originate in `terok_util` (``CommandDef``
 family, ``namespace_*_dir``, fs helpers, ``ConfigStack``/``deep_merge``,
-``sanitize_tty``, ``render_template``, ``podman_userns_args``) are
-imported directly from `terok_util` at every call site — they don't
-flow through this adapter even when the same symbol also happens to
-exist on ``terok_sandbox``.  This adapter owns the sandbox-specific
-surface only.
+``sanitize_tty``, ``podman_userns_args``) are imported directly from
+`terok_util` at every call site — they don't flow through this adapter
+even when the same symbol also happens to exist on ``terok_sandbox``.
+This adapter owns the sandbox-specific surface only.
 
 When a sibling release renames, splits, or relocates a symbol, only
 this file needs to change — the rest of terok-executor keeps reading
