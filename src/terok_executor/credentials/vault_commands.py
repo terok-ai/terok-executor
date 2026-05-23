@@ -14,7 +14,7 @@ import sys
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from terok_util import CommandDef, CommandTree
 
@@ -415,28 +415,24 @@ def _build_sandbox_tree() -> CommandTree:
     """
     from terok_executor.integrations.sandbox import COMMANDS as SANDBOX_COMMANDS
 
-    # The cast + type-ignore bridge the structural-but-not-nominal split
-    # between ``terok_sandbox.commands._types.{CommandDef,CommandTree}``
-    # and ``terok_util.cli_types.{CommandDef,CommandTree}``: identical
-    # dataclass shape, different class identity until sandbox adopts
-    # terok-util itself.  Runtime works via duck typing; mypy needs the
-    # explicit bridge.
-    return cast(
-        CommandTree,
-        SANDBOX_COMMANDS.overlay(_VAULT_OVERRIDES).extend_at(
-            ("vault",),
-            (
-                CommandDef(
-                    name="routes",
-                    help="Regenerate routes.json from YAML roster",
-                    handler=_handle_routes,
-                ),
-                CommandDef(
-                    name="clean",
-                    help="Remove leaked credential files from shared mounts",
-                    handler=_handle_clean,
-                ),
-            ),  # type: ignore[arg-type]
+    # Both ``SANDBOX_COMMANDS`` and the locally-built ``CommandDef`` /
+    # ``CommandTree`` now share the same ``terok_util.cli_types``
+    # identity (sandbox adopted terok-util in v0.0.124a16+), so the
+    # earlier ``cast`` + ``type: ignore`` bridge across two structurally-
+    # identical-but-nominally-distinct classes is no longer needed.
+    return SANDBOX_COMMANDS.overlay(_VAULT_OVERRIDES).extend_at(
+        ("vault",),
+        (
+            CommandDef(
+                name="routes",
+                help="Regenerate routes.json from YAML roster",
+                handler=_handle_routes,
+            ),
+            CommandDef(
+                name="clean",
+                help="Remove leaked credential files from shared mounts",
+                handler=_handle_clean,
+            ),
         ),
     )
 
