@@ -26,8 +26,9 @@ def _pf(**overrides) -> Preflight:
 
 @patch("terok_executor.preflight.subprocess.run")
 @patch("terok_executor.preflight.shutil.which", return_value="/usr/bin/podman")
-def test_podman_ok(_which: MagicMock, _run: MagicMock) -> None:
+def test_podman_ok(_which: MagicMock, mock_run: MagicMock) -> None:
     """Podman found and responds → ok."""
+    mock_run.return_value = MagicMock(returncode=0, stdout=b"5.0.0\n", stderr=b"")
     assert _pf().check_podman().ok is True
 
 
@@ -37,6 +38,21 @@ def test_podman_missing(_which: MagicMock) -> None:
     r = _pf().check_podman()
     assert r.ok is False
     assert "not found" in r.message
+
+
+@patch("terok_executor.preflight.subprocess.run")
+@patch("terok_executor.preflight.shutil.which", return_value="/usr/bin/podman")
+def test_podman_present_but_nonzero_exit(_which: MagicMock, mock_run: MagicMock) -> None:
+    """``podman version`` exits non-zero → fail with stderr detail.
+
+    Guards the CodeRabbit finding on PR #365: a binary that exists but
+    isn't responding (broken install, missing dependencies, half-set-up
+    rootless config) was previously misreported as healthy.
+    """
+    mock_run.return_value = MagicMock(returncode=125, stdout=b"", stderr=b"socket missing\n")
+    r = _pf().check_podman()
+    assert r.ok is False
+    assert "socket missing" in r.message
 
 
 # ── Sandbox services aggregate ───────────────────────────────────────

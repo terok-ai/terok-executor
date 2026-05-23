@@ -185,13 +185,16 @@ class Preflight:
         if not shutil.which("podman"):
             return CheckResult("podman", False, "not found on PATH")
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["podman", "version", "--format", "{{.Client.Version}}"],
                 capture_output=True,
                 timeout=10,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
             return CheckResult("podman", False, f"found but not responding: {exc}")
+        if result.returncode != 0:
+            detail = (result.stderr or b"").decode(errors="ignore").strip() or "non-zero exit"
+            return CheckResult("podman", False, f"found but not responding: {detail}")
         return CheckResult("podman", True, "ok")
 
     def check_git(self) -> CheckResult:  # noqa: PLR6301
