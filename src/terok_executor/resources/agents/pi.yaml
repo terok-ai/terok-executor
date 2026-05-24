@@ -11,7 +11,11 @@
 # ``api.openai.com`` direct.
 roster_version: 1
 
-kind: native
+# kind: bridge — Pi is a multi-provider agent (single binary speaking
+# 15+ upstream LLM APIs), the same shape as opencode.yaml.  Functionally
+# equivalent to ``kind: native`` in the current loader (both are
+# ``is_agent_kind``), but the categorisation matches Pi's actual role.
+kind: bridge
 label: Pi
 binary: pi
 
