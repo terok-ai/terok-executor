@@ -162,7 +162,7 @@ class Preflight:
         if not r.ok and self.interactive:
             print(f"  {r.name}... {r.message}")
             if self._confirm(f"Authenticate {self.provider} now?") and _fix_credentials(
-                self.provider, base_image=self.base_image
+                self.provider, base_image=self.base_image, family=self.family
             ):
                 r = self.check_credentials()
         _print_step(r)
@@ -402,8 +402,13 @@ def _fix_ssh_key(scope: str = "standalone") -> bool:
     return True
 
 
-def _fix_credentials(provider: str, *, base_image: str) -> bool:
-    """Run the interactive authentication flow for *provider*."""
+def _fix_credentials(provider: str, *, base_image: str, family: str | None = None) -> bool:
+    """Run the interactive authentication flow for *provider*.
+
+    *family* threads through to the lazy image resolver so the auth-time
+    build matches the family the rest of preflight builds against (an
+    unknown base requires the explicit override).
+    """
     from terok_executor.container.build import ImageBuilder
     from terok_executor.credentials.auth import Authenticator
     from terok_executor.credentials.vault_config import write_vault_config
@@ -415,7 +420,7 @@ def _fix_credentials(provider: str, *, base_image: str) -> bool:
         Authenticator(provider).run(
             None,
             mounts_dir=mounts_dir(),
-            image=lambda: ImageBuilder(base_image).ensure_default_l1(),
+            image=lambda: ImageBuilder(base_image, family=family).ensure_default_l1(),
         )
     except SystemExit:
         return False

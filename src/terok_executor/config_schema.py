@@ -85,7 +85,7 @@ class ExecutorConfigView(SandboxConfigView):
     back to ``extra="forbid"``: the topmost layer knows every section,
     so a typo at the top level is caught there.
 
-    The class also exposes classmethods for reading and writing the
+    The class also exposes staticmethods for reading and writing the
     ``image:`` section on disk: ``image_agents()``,
     ``image_base_image()``, and ``set_image_agents(selection)``.  The
     schema thus owns both the *shape* and the canonical *accessors*
@@ -127,12 +127,20 @@ class ExecutorConfigView(SandboxConfigView):
 
         Caller validates *selection* up-front (typically via
         [`validate_agent_selection`][terok_executor.validate_agent_selection]).
+
+        Invalidates terok-util's process-wide ``read_config_section``
+        cache before returning so the next ``image_agents()`` /
+        ``image_base_image()`` call observes the freshly-written value
+        rather than the in-memory snapshot taken before the write.
         """
+        from terok_util import paths as _util_paths
+
         from terok_executor.config import writable_config_path
         from terok_executor.integrations.sandbox import yaml_update_section
 
         path = writable_config_path()
         yaml_update_section(path, "image", {"agents": selection})
+        _util_paths._config_section_cache.clear()
         return path
 
 
