@@ -24,7 +24,6 @@ from terok_executor.commands import (
 )
 from terok_executor.container.build import ImageSet
 
-
 # ── _handle_auth ────────────────────────────────────────────
 
 
@@ -124,5 +123,3 @@ def test_remove_images_uses_image_builder_tags() -> None:
     # L0 / L1 tags come from the ImageBuilder properties.
     assert "terok-l0:fedora-44" in argv
     assert "terok-l1-cli:fedora-44" in argv
-
-
