@@ -21,7 +21,6 @@ from terok_executor.container.build import (
     ImageSet,
 )
 
-
 # ── Build delegation ──────────────────────────────────────────────
 
 
@@ -117,14 +116,10 @@ def test_render_l0_uses_self_base_and_family() -> None:
 def test_render_l1_threads_resolved_family_and_args() -> None:
     """``render_l1`` resolves family from the base when ``family`` is None."""
     builder = ImageBuilder("fedora:44")  # family=None — auto-detect
-    with mock.patch(
-        "terok_executor.container.build.render_l1", return_value="L1 dockerfile"
-    ) as fn:
+    with mock.patch("terok_executor.container.build.render_l1", return_value="L1 dockerfile") as fn:
         result = builder.render_l1("l0-tag", agents=("claude",), cache_bust="42")
     assert result == "L1 dockerfile"
-    fn.assert_called_once_with(
-        "l0-tag", family="rpm", agents=("claude",), cache_bust="42"
-    )
+    fn.assert_called_once_with("l0-tag", family="rpm", agents=("claude",), cache_bust="42")
 
 
 def test_render_l1_sidecar_threads_self_state() -> None:
