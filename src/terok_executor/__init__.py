@@ -10,8 +10,8 @@ lifecycle of one AI coding agent at a time.  Designed for standalone use
 The public surface is ``__all__`` below.  Key entry points:
 
 - [`AgentRunner`][terok_executor.AgentRunner] — launch agents in containers
-- [`authenticate`][terok_executor.authenticate] — credential flow
-- [`build_base_images`][terok_executor.build_base_images] — image construction
+- [`Authenticator`][terok_executor.Authenticator] — credential flow
+- [`ImageBuilder`][terok_executor.ImageBuilder] — image construction
 - [`AgentRoster.shared`][terok_executor.AgentRoster.shared] — YAML agent registry (process-wide cache)
 
 Implementation-detail types (raw config schema fragments, ACP error
