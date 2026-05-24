@@ -270,9 +270,9 @@ class Preflight:
 
     def check_images(self) -> CheckResult:
         """Check whether L0+L1 container images exist."""
-        from terok_executor.container.build import l1_image_tag
+        from terok_executor.container.build import ImageBuilder
 
-        tag = l1_image_tag(self.base_image)
+        tag = ImageBuilder(self.base_image).l1_tag()
         try:
             result = subprocess.run(
                 ["podman", "image", "exists", tag],
@@ -375,11 +375,11 @@ def _fix_sandbox_services() -> bool:
 
 def _fix_images(base_image: str, family: str | None = None) -> bool:
     """Build L0+L1 container images with a friendly first-run banner."""
-    from terok_executor.container.build import BuildError, build_base_images
+    from terok_executor.container.build import BuildError, ImageBuilder
 
     _print_first_build_preamble()
     try:
-        build_base_images(base_image, family=family)
+        ImageBuilder(base_image, family).build_base()
     except BuildError as exc:
         print(f"  Build failed: {exc}", file=sys.stderr)
         return False
@@ -404,19 +404,18 @@ def _fix_ssh_key(scope: str = "standalone") -> bool:
 
 def _fix_credentials(provider: str, *, base_image: str) -> bool:
     """Run the interactive authentication flow for *provider*."""
-    from terok_executor.container.build import ensure_default_l1
-    from terok_executor.credentials.auth import authenticate
+    from terok_executor.container.build import ImageBuilder
+    from terok_executor.credentials.auth import Authenticator
     from terok_executor.credentials.vault_config import write_vault_config
     from terok_executor.paths import mounts_dir
 
     # Lazy image resolution — picking API key from the OAuth-or-API-key prompt
     # short-circuits before we ever invoke ensure_default_l1.
     try:
-        authenticate(
+        Authenticator(provider).run(
             None,
-            provider,
             mounts_dir=mounts_dir(),
-            image=lambda: ensure_default_l1(base_image),
+            image=lambda: ImageBuilder(base_image).ensure_default_l1(),
         )
     except SystemExit:
         return False
