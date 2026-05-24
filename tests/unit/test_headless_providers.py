@@ -60,6 +60,7 @@ class TestAgentProviderRegistry:
             "opencode",
             "kisski",
             "openrouter",
+            "pi",
         }
         assert set(AGENT_PROVIDERS.keys()) == expected
 
