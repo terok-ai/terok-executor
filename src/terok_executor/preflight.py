@@ -212,12 +212,14 @@ class Preflight:
         return CheckResult("git", True, "ok")
 
     def check_sandbox_services(self) -> CheckResult:  # noqa: PLR6301
-        """Roll vault + shield-hooks + gate into a single readiness verdict.
+        """Roll shield-hooks + gate into a single readiness verdict.
 
-        Treated as a unit because the first two — vault and shield — are
-        installed by the sandbox aggregator and fail the same way on a
-        fresh host.  Reporting each individually would just clutter the
-        first-run summary.
+        Post-supervisor-refactor: there is no global vault daemon to
+        probe — the per-container supervisor (spawned by the terok-
+        sandbox OCI hook) embeds the vault proxy and starts on demand.
+        Preflight therefore only checks the two host-side services
+        that still need to exist before a launch: the shield OCI hooks
+        and the git gate.
 
         The gate is special-cased: when it's missing because the host has
         *no way to run it* (no systemd to install units, no git binary to
@@ -230,18 +232,14 @@ class Preflight:
         from terok_executor.integrations.sandbox import (
             GateServerManager,
             SandboxConfig,
-            VaultManager,
             check_environment,
         )
 
         # One SandboxConfig read covers every downstream probe — each of the
         # helpers below would otherwise rebuild it from layered YAML.
         cfg = SandboxConfig()
-        vault = VaultManager(cfg)
         gate = GateServerManager(cfg)
         missing: list[str] = []
-        if not (vault.is_socket_active() or vault.is_daemon_running()):
-            missing.append("vault")
         if check_environment(cfg).health != "ok":
             missing.append("shield hooks")
 
@@ -264,9 +262,9 @@ class Preflight:
             return CheckResult(
                 "sandbox services",
                 True,
-                f"shield + vault ready; gate unavailable: {gate_reason}",
+                f"shield ready; gate unavailable: {gate_reason}",
             )
-        return CheckResult("sandbox services", True, "shield + vault + gate ready")
+        return CheckResult("sandbox services", True, "shield + gate ready")
 
     def check_images(self) -> CheckResult:
         """Check whether L0+L1 container images exist."""
@@ -357,12 +355,7 @@ class Preflight:
 
 
 def _fix_sandbox_services() -> bool:
-    """Self-heal missing sandbox services via [`ensure_sandbox_ready`][terok_executor.ensure_sandbox_ready].
-
-    Always per-user — the interactive preflight never escalates to
-    sudo behind the operator's back.  ``--root`` is the explicit
-    opt-in via ``terok-executor setup``.
-    """
+    """Self-heal missing sandbox services via [`ensure_sandbox_ready`][terok_executor.ensure_sandbox_ready]."""
     from terok_executor.sandbox import ensure_sandbox_ready
 
     try:

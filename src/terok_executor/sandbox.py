@@ -32,8 +32,8 @@ def ensure_sandbox_ready(
     the operator remembers to run ``vault routes``.
 
     ``no_vault`` gates the routes pre-step (if vault isn't being
-    touched, don't regenerate); everything else (``root``, other
-    ``no_*`` flags) flows through to the aggregator.
+    touched, don't regenerate); other ``no_*`` flags flow through to
+    the aggregator.
 
     Routes regeneration renders a ``Vault routes`` stage line so it
     sits in the same column as the aggregator's own output rather

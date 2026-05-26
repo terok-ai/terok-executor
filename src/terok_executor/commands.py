@@ -519,7 +519,6 @@ def _handle_stop(*, name: str) -> None:
 def _handle_setup(
     *,
     check: bool = False,
-    root: bool = False,
     no_sandbox: bool = False,
     no_images: bool = False,
     base: str = DEFAULT_BASE_IMAGE,
@@ -540,7 +539,7 @@ def _handle_setup(
     if not no_sandbox:
         from .sandbox import ensure_sandbox_ready
 
-        ensure_sandbox_ready(cfg=cfg, root=root)
+        ensure_sandbox_ready(cfg=cfg)
 
     if not no_images:
         _build_images_with_banner(base, family)
@@ -553,7 +552,6 @@ def _handle_setup(
 
 def _handle_uninstall(
     *,
-    root: bool = False,
     no_sandbox: bool = False,
     keep_images: bool = False,
     base: str = DEFAULT_BASE_IMAGE,
@@ -571,7 +569,7 @@ def _handle_uninstall(
     if not no_sandbox:
         from terok_executor.integrations.sandbox import _handle_sandbox_uninstall
 
-        _handle_sandbox_uninstall(cfg=cfg, root=root)
+        _handle_sandbox_uninstall(cfg=cfg)
 
     print()
     print("Uninstall complete.")
@@ -892,11 +890,6 @@ SETUP_COMMAND = CommandDef(
             help="Report status without installing anything; exit non-zero if incomplete",
         ),
         ArgDef(
-            name="--root",
-            action="store_true",
-            help="Install shield hooks system-wide (requires sudo); vault + gate stay per-user",
-        ),
-        ArgDef(
             name="--no-sandbox",
             action="store_true",
             dest="no_sandbox",
@@ -926,11 +919,6 @@ UNINSTALL_COMMAND = CommandDef(
     help="Remove sandbox services + container images (mirror of setup)",
     handler=_handle_uninstall,
     args=(
-        ArgDef(
-            name="--root",
-            action="store_true",
-            help="Remove shield hooks from the system hooks directory (requires sudo)",
-        ),
         ArgDef(
             name="--no-sandbox",
             action="store_true",

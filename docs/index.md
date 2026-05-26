@@ -47,8 +47,7 @@ terok-executor run claude . -p "..."
 
 `setup` is idempotent — safe to re-run after upgrades.  If you want
 to do the steps individually, `terok-executor build` only builds
-images and `terok-executor vault install` only provisions the
-vault.
+images.
 
 ## Authenticate
 

@@ -426,8 +426,15 @@ class TestLaunchPrepared:
         spec = sandbox.run.call_args[0][0]
         assert spec.annotations["dossier.meta_path"] == "/var/lib/terok/tasks/t1.json"
 
-    def test_annotations_default_empty(self, tmp_path: Path) -> None:
-        """Omitting *annotations* leaves RunSpec.annotations empty."""
+    def test_annotations_default_only_sidecar(self, tmp_path: Path) -> None:
+        """Omitting *annotations* leaves only the supervisor sidecar pointer.
+
+        Every terok-managed container now carries
+        ``terok.sandbox.sidecar=<abspath>`` so the OCI hook can find
+        the sidecar JSON; that's the trigger annotation, not caller
+        metadata, so it must be present even when the caller passed
+        no other annotations.
+        """
         sandbox = _mock_sandbox()
         runner = AgentRunner(sandbox=sandbox)
 
@@ -441,7 +448,8 @@ class TestLaunchPrepared:
         )
 
         spec = sandbox.run.call_args[0][0]
-        assert dict(spec.annotations) == {}
+        assert set(spec.annotations) == {"terok.sandbox.sidecar"}
+        assert spec.annotations["terok.sandbox.sidecar"].endswith("/sidecar/c.json")
 
     def test_runtime_propagates_to_runspec(self, tmp_path: Path) -> None:
         """``runtime="krun"`` lands on ``RunSpec.runtime`` — the typed channel
@@ -541,6 +549,59 @@ class TestLaunchPrepared:
                 task_dir=tmp_path,
                 gpu=True,
             )
+
+    def test_sidecar_identity_propagates(self, tmp_path: Path) -> None:
+        """``project_id`` / ``task_id`` / ``dossier_path`` reach the sidecar JSON.
+
+        The OCI prestart hook fires between ``podman create`` and
+        ``podman start``, so the supervisor must see the enriched
+        identity *before* the container is created — i.e. written
+        synchronously from inside ``launch_prepared`` rather than
+        rewritten after ``sandbox.run`` returns.
+        """
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+        dossier = tmp_path / "dossier.toml"
+        dossier.write_text("")
+
+        with patch("terok_executor.container.sidecar.write_supervisor_sidecar") as write_sidecar:
+            runner.launch_prepared(
+                env={},
+                volumes=[],
+                image="img",
+                command=[],
+                name="c",
+                task_dir=tmp_path,
+                project_id="proj-abc",
+                task_id="task-42",
+                dossier_path=dossier,
+            )
+
+        write_sidecar.assert_called_once()
+        kwargs = write_sidecar.call_args.kwargs
+        assert kwargs["project_id"] == "proj-abc"
+        assert kwargs["task_id"] == "task-42"
+        assert kwargs["dossier_path"] == dossier
+
+    def test_sidecar_identity_defaults_to_empty(self, tmp_path: Path) -> None:
+        """Standalone runs (no terok above) leave identity blank."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+
+        with patch("terok_executor.container.sidecar.write_supervisor_sidecar") as write_sidecar:
+            runner.launch_prepared(
+                env={},
+                volumes=[],
+                image="img",
+                command=[],
+                name="c",
+                task_dir=tmp_path,
+            )
+
+        kwargs = write_sidecar.call_args.kwargs
+        assert kwargs["project_id"] == ""
+        assert kwargs["task_id"] == ""
+        assert kwargs["dossier_path"] is None
 
 
 class TestWaitForExit:
@@ -803,22 +864,18 @@ class TestVaultEnv:
     These tests verify the runner delegates correctly.
     """
 
-    def test_vault_not_running_no_tokens_in_run(self, tmp_path: Path) -> None:
-        """When vault is not running, headless run has no TEROK_TOKEN_BROKER_PORT."""
+    def test_no_credentials_no_tokens_in_run(self, tmp_path: Path) -> None:
+        """No stored credentials → no TEROK_TOKEN_BROKER_PORT in the spec.
+
+        Post-supervisor-refactor there's no global vault daemon to
+        probe, so token injection is gated only on "is there a routed
+        credential in the DB" — an empty per-test DB satisfies that
+        without any vault mocks.
+        """
         sandbox = _mock_sandbox()
         runner = AgentRunner(sandbox=sandbox)
 
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch(
-                "terok_executor.integrations.sandbox.VaultManager.is_socket_active",
-                return_value=False,
-            ),
-            patch(
-                "terok_executor.integrations.sandbox.VaultManager.is_daemon_running",
-                return_value=False,
-            ),
-        ):
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
             runner.run_headless("claude", str(tmp_path), prompt="test", follow=False)
 
         spec = sandbox.run.call_args[0][0]
