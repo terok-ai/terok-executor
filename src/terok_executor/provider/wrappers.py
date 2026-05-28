@@ -211,7 +211,7 @@ def initial_prompt_block(
 
     *provider* shapes the seeded argv so the prompt is interpreted as a
     conversation message and not as some CLI's positional cwd / unrelated
-    argument — see [`_interactive_seed_argv_prefix`][terok_executor.provider.wrappers._interactive_seed_argv_prefix].
+    argument — see ``_interactive_seed_argv_prefix``.
     """
     guards = ['[ -z "$_timeout" ]', "[ $# -eq 0 ]"]
     if session_path:
