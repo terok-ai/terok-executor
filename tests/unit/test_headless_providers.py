@@ -258,23 +258,30 @@ class TestGenerateAgentWrapper:
         prepend ``run`` because their default TUI binds positional[0] to a
         cwd path.  Copilot prepends ``-p`` because its CLI documents
         ``-p <prompt>`` / stdin as the only non-interactive seed forms.
-        Everything else (Claude, Codex, Vibe) accepts a bare positional.
+        Everything else (Claude, Codex, Vibe, Pi) accepts a bare positional.
         """
+        bare = f'set -- "$(cat {INITIAL_PROMPT_PATH})"'
+        run = f'set -- run "$(cat {INITIAL_PROMPT_PATH})"'
+        dash_p = f'set -- -p "$(cat {INITIAL_PROMPT_PATH})"'
         expected: dict[str, str] = {
-            "opencode": f'set -- run "$(cat {INITIAL_PROMPT_PATH})"',
-            "blablador": f'set -- run "$(cat {INITIAL_PROMPT_PATH})"',
-            "kisski": f'set -- run "$(cat {INITIAL_PROMPT_PATH})"',
-            "openrouter": f'set -- run "$(cat {INITIAL_PROMPT_PATH})"',
-            "copilot": f'set -- -p "$(cat {INITIAL_PROMPT_PATH})"',
-            "claude": f'set -- "$(cat {INITIAL_PROMPT_PATH})"',
-            "codex": f'set -- "$(cat {INITIAL_PROMPT_PATH})"',
-            "vibe": f'set -- "$(cat {INITIAL_PROMPT_PATH})"',
+            "opencode": run,
+            "blablador": run,
+            "kisski": run,
+            "openrouter": run,
+            "copilot": dash_p,
+            "claude": bare,
+            "codex": bare,
+            "vibe": bare,
+            "pi": bare,
         }
-        for name, line in expected.items():
-            if name not in AGENT_PROVIDERS:
-                continue
+        # Every registered provider must have an explicit decision recorded
+        # here — new providers can't sneak in without an audit of their CLI
+        # against the seed-shape categories above.
+        missing = set(AGENT_PROVIDERS) - set(expected)
+        assert not missing, f"missing seed-shape decision for: {sorted(missing)}"
+        for name in AGENT_PROVIDERS:
             wrapper = _provider_wrapper(name)
-            assert line in wrapper, f"{name} should emit `{line}`"
+            assert expected[name] in wrapper, f"{name} should emit `{expected[name]}`"
 
     def test_initial_prompt_skipped_when_session_present(self) -> None:
         """Wrappers with a session_file gate the prompt pickup on no resume."""
