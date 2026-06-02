@@ -573,7 +573,10 @@ def _run_auth_container(
     ) as session:
         print(session.banner)
         try:
-            subprocess.run(session.argv, check=True)
+            # argv is built by prepare_oauth_session from the bundled roster
+            # command + a resolved image tag, no shell, no untrusted input;
+            # the foreground run is intentional for the CLI.
+            subprocess.run(session.argv, check=True)  # nosec B603
         except subprocess.CalledProcessError as e:
             if e.returncode == 130:
                 print("\nAuthentication container stopped.")
