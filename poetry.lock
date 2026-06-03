@@ -3407,13 +3407,14 @@ url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.6.14a7/t
 
 [[package]]
 name = "terok-sandbox"
-version = "0.0.124a21"
+version = "0.0.124a22"
 description = "Hardened Podman container runner with gate server and shield integration"
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "terok_sandbox-0.0.124a22-py3-none-any.whl", hash = "sha256:2831bac04641d79a33fc43f594c6b047acbb0ee2f2146dc87e10c6fca0978a81"},
+]
 
 [package.dependencies]
 aiohttp = ">=3.9"
@@ -3427,24 +3428,23 @@ pydantic = ">=2.9"
 "ruamel.yaml" = ">=0.18"
 sqlcipher3 = ">=0.6.2"
 terok_clearance = {url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.6.14a7/terok_clearance-0.6.14a7-py3-none-any.whl"}
-terok-shield = {git = "https://github.com/sliwowitz/terok-shield.git", rev = "feat/apparmor-dnsmasq-profile"}
+terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.6.42a10/terok_shield-0.6.42a10-py3-none-any.whl"}
 terok_util = {url = "https://github.com/terok-ai/terok-util/releases/download/v0.0.2a1/terok_util-0.0.2a1-py3-none-any.whl"}
 
 [package.source]
-type = "git"
-url = "https://github.com/sliwowitz/terok-sandbox.git"
-reference = "feat/apparmor-dnsmasq-profile"
-resolved_reference = "89dbfd43336fde182d2311bc13f40f072369ef1c"
+type = "url"
+url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.124a22/terok_sandbox-0.0.124a22-py3-none-any.whl"
 
 [[package]]
 name = "terok-shield"
-version = "0.6.42a9"
+version = "0.6.42a10"
 description = "nftables-based egress firewalling for Podman containers"
 optional = false
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "terok_shield-0.6.42a10-py3-none-any.whl", hash = "sha256:fedb948bb7fa2dd063b03056675679f11af89f9a188438f4ebc27a8e52abbc7a"},
+]
 
 [package.dependencies]
 pydantic = ">=2.0"
@@ -3452,10 +3452,8 @@ PyYAML = ">=6.0"
 terok_util = {url = "https://github.com/terok-ai/terok-util/releases/download/v0.0.2a1/terok_util-0.0.2a1-py3-none-any.whl"}
 
 [package.source]
-type = "git"
-url = "https://github.com/sliwowitz/terok-shield.git"
-reference = "feat/apparmor-dnsmasq-profile"
-resolved_reference = "dba9e1808dd4a737565e55cdd9ea69e60606b453"
+type = "url"
+url = "https://github.com/terok-ai/terok-shield/releases/download/v0.6.42a10/terok_shield-0.6.42a10-py3-none-any.whl"
 
 [[package]]
 name = "terok-util"
@@ -3873,4 +3871,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "7c40007298136c5376626c114d84b50bf96c6dc14d92ffd61fc15a2df49a2e8d"
+content-hash = "b72ab3dcf1c23853650d65d9c64717f2a60c923d76f55f6c9538868a373eff2b"
