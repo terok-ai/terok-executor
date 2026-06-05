@@ -39,7 +39,6 @@ class WrapperConfig:
     """Groups parameters for generating the Claude shell wrapper."""
 
     has_agents: bool
-    has_instructions: bool = False
 
 
 def generate_agent_wrapper(

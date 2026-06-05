@@ -147,8 +147,9 @@ class TestGenerateClaudeWrapper:
         assert "agents.json" in _generate_claude_wrapper(WrapperConfig(has_agents=True))
 
     def test_wrapper_includes_append_system_prompt(self) -> None:
-        """Wrapper includes --append-system-prompt when has_instructions=True."""
-        wrapper = _generate_claude_wrapper(WrapperConfig(has_agents=False, has_instructions=True))
+        """Wrapper injects --append-system-prompt via a runtime file guard."""
+        wrapper = _generate_claude_wrapper(WrapperConfig(has_agents=False))
+        assert "[ -f /home/dev/.terok/instructions.md ]" in wrapper
         assert "--append-system-prompt" in wrapper
 
     def test_wrapper_timeout_support(self) -> None:

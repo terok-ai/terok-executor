@@ -137,7 +137,6 @@ def prepare_agent_config_dir(spec: AgentConfigSpec) -> Path:
     # are configured, a neutral default is used.
     _DEFAULT_INSTRUCTIONS = "Follow the project's coding conventions and existing patterns."
 
-    has_instructions = bool(spec.instructions)
     instructions_text = spec.instructions or _DEFAULT_INSTRUCTIONS
     (agent_config_dir / "instructions.md").write_text(instructions_text, encoding="utf-8")
 
@@ -160,19 +159,7 @@ def prepare_agent_config_dir(spec: AgentConfigSpec) -> Path:
     # can invoke any agent (each provider gets its own shell function).
     from .wrappers import generate_all_wrappers
 
-    def _claude_wrapper_with_instructions(cfg: WrapperConfig) -> str:
-        """Wrap _generate_claude_wrapper with the resolved has_instructions flag."""
-        return _generate_claude_wrapper(
-            WrapperConfig(
-                has_agents=cfg.has_agents,
-                has_instructions=has_instructions,
-            )
-        )
-
-    wrapper = generate_all_wrappers(
-        has_agents,
-        claude_wrapper_fn=_claude_wrapper_with_instructions,
-    )
+    wrapper = generate_all_wrappers(has_agents, claude_wrapper_fn=_generate_claude_wrapper)
     (agent_config_dir / "terok-executor.sh").write_text(wrapper, encoding="utf-8")
 
     # Write SessionStart hook — only for providers that support it (Claude)
@@ -405,11 +392,13 @@ def _generate_claude_wrapper(cfg: WrapperConfig) -> str:
         lines.append("    [ -f /home/dev/.terok/agents.json ] && \\")
         lines.append('        _args+=(--agents "$(cat /home/dev/.terok/agents.json)")')
 
-    if cfg.has_instructions:
-        lines.append("    [ -f /home/dev/.terok/instructions.md ] && \\")
-        lines.append(
-            '        _args+=(--append-system-prompt "$(cat /home/dev/.terok/instructions.md)")'
-        )
+    # Instructions are always present (custom text or a neutral default), so
+    # inject them the way every other agent's wrapper does: a runtime
+    # file-existence guard, with no separate build-time flag.
+    lines.append("    [ -f /home/dev/.terok/instructions.md ] && \\")
+    lines.append(
+        '        _args+=(--append-system-prompt "$(cat /home/dev/.terok/instructions.md)")'
+    )
 
     # Resume previous session if session file exists (written by SessionStart hook).
     # Only inject in headless mode (--terok-timeout) or bare interactive launch
