@@ -3441,13 +3441,13 @@ pydantic = ">=2.13,<3.0"
 sqlcipher3 = "0.6.2"
 terok_clearance = {url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.7.2/terok_clearance-0.7.2-py3-none-any.whl"}
 terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.7.1/terok_shield-0.7.1-py3-none-any.whl"}
-terok-util = {git = "https://github.com/terok-ai/terok-util.git", rev = "879265e4808f1bdb8bdd7b21d71508021b9e90dd"}
+terok-util = ">=0.2.1,<0.3.0"
 
 [package.source]
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
 reference = "feat/shared-matrix-engine"
-resolved_reference = "0cc871d5f5af0e88e65b93fdb7baa1dcb91db50a"
+resolved_reference = "8768ac823940c515955fd0973057751b92ec4deb"
 
 [[package]]
 name = "terok-shield"
@@ -3471,24 +3471,20 @@ url = "https://github.com/terok-ai/terok-shield/releases/download/v0.7.1/terok_s
 
 [[package]]
 name = "terok-util"
-version = "0.2.0"
+version = "0.2.1"
 description = "Shared utility library for the terok-* sibling packages"
 optional = false
-python-versions = ">=3.12,<4.0"
+python-versions = "<4.0,>=3.12"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "terok_util-0.2.1-py3-none-any.whl", hash = "sha256:51a2dd3e5d8de52cc349aa4d3fab46a05c02c190a005525bf5b21c753e421f2f"},
+    {file = "terok_util-0.2.1.tar.gz", hash = "sha256:7311147632b585c0e3764ba3092044f5d330e3515327a315866743ef90459e83"},
+]
 
 [package.dependencies]
 jinja2 = ">=3.1,<4.0"
 platformdirs = ">=4.10,<5.0"
 "ruamel.yaml" = "0.19.1"
-
-[package.source]
-type = "git"
-url = "https://github.com/terok-ai/terok-util.git"
-reference = "879265e4808f1bdb8bdd7b21d71508021b9e90dd"
-resolved_reference = "879265e4808f1bdb8bdd7b21d71508021b9e90dd"
 
 [[package]]
 name = "tomli"
@@ -3863,4 +3859,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "c10d065785613760e0ef8f17a87661800d8f4acf0475af4acd2e593d6a452568"
+content-hash = "e4c99e76cb14ee5045d3e3438cf9b72737edbf87933d0679e927fdcf869c9fc3"
