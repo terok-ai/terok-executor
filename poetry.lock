@@ -3441,13 +3441,13 @@ pydantic = ">=2.13,<3.0"
 sqlcipher3 = "0.6.2"
 terok_clearance = {url = "https://github.com/terok-ai/terok-clearance/releases/download/v0.7.2/terok_clearance-0.7.2-py3-none-any.whl"}
 terok_shield = {url = "https://github.com/terok-ai/terok-shield/releases/download/v0.7.1/terok_shield-0.7.1-py3-none-any.whl"}
-terok-util = {git = "https://github.com/sliwowitz/terok-util.git", rev = "feat/matrix-engine"}
+terok-util = {git = "https://github.com/terok-ai/terok-util.git", rev = "879265e4808f1bdb8bdd7b21d71508021b9e90dd"}
 
 [package.source]
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
 reference = "feat/shared-matrix-engine"
-resolved_reference = "c650c944e94b7a820e82717c02393c2f4debca1d"
+resolved_reference = "0cc871d5f5af0e88e65b93fdb7baa1dcb91db50a"
 
 [[package]]
 name = "terok-shield"
@@ -3486,9 +3486,9 @@ platformdirs = ">=4.10,<5.0"
 
 [package.source]
 type = "git"
-url = "https://github.com/sliwowitz/terok-util.git"
-reference = "feat/matrix-engine"
-resolved_reference = "66edd4af4f17b27d5c679cf2b81f6739e5f34ae2"
+url = "https://github.com/terok-ai/terok-util.git"
+reference = "879265e4808f1bdb8bdd7b21d71508021b9e90dd"
+resolved_reference = "879265e4808f1bdb8bdd7b21d71508021b9e90dd"
 
 [[package]]
 name = "tomli"
@@ -3863,4 +3863,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "1a21cce439e0af790c5bde9340b56bb36c73483335299ed60f9cfb07129ce90f"
+content-hash = "c10d065785613760e0ef8f17a87661800d8f4acf0475af4acd2e593d6a452568"
