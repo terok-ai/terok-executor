@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -542,6 +543,42 @@ class TestTemplateRendering:
         deb = render_l0("ubuntu:24.04", family="deb")
         assert "pam_succeed_if.so" not in deb
         assert "/etc/pam.d/sudo" not in deb
+
+    def test_l0_deb_pins_git_to_http1_on_noble_only(self) -> None:
+        # GitHub answers most anonymous git-over-HTTPS requests from noble's
+        # git/libcurl-gnutls client with 401; HTTP/1.1 is served.  The step is
+        # deb-only and gated at build time on the base's UBUNTU_CODENAME, so a
+        # Debian or 26.04 base runs the check and changes nothing.
+        deb = render_l0("ubuntu:24.04", family="deb")
+        assert '[ "${UBUNTU_CODENAME:-}" = "noble" ]' in deb
+        assert "git config --system http.version HTTP/1.1" in deb
+        rpm = render_l0("registry.fedoraproject.org/fedora:43", family="rpm")
+        assert "http.version" not in rpm
+
+    def test_l0_noble_guard_applies_only_on_noble(self, tmp_path: Path) -> None:
+        # Run the rendered guard itself under sh, with a stub git on PATH that
+        # records its arguments: the setting is written once for noble and
+        # never for any other codename.
+        deb = render_l0("ubuntu:24.04", family="deb")
+        guard = next(
+            line.strip()
+            for line in deb.splitlines()
+            if line.strip().startswith("if ") and "UBUNTU_CODENAME" in line
+        )
+        log = tmp_path / "git.log"
+        stub = tmp_path / "git"
+        stub.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n')
+        stub.chmod(0o755)
+        env = {"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"}
+        for codename, expected in (
+            ("noble", "config --system http.version HTTP/1.1"),
+            ("plucky", ""),
+        ):
+            log.write_text("")
+            subprocess.run(
+                ["sh", "-eu", "-c", f"UBUNTU_CODENAME={codename}; {guard}"], env=env, check=True
+            )
+            assert log.read_text().strip() == expected, codename
 
     def test_l0_validates_sudoers(self) -> None:
         # ``visudo -cf`` fails the build on a malformed sudoers drop-in, which
