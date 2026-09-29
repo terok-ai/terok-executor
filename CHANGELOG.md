@@ -6,6 +6,15 @@
 - Resolve host tools from the current launch environment.
 - Serialize setup and uninstall with the other packages.
 
+## v0.5.0 — At Your Service
+
+## What's Changed
+* feat(codex): reach the vault over its in-container TLS bridge in https://github.com/terok-ai/terok-executor/pull/552
+* fix: complete host tool selection in executor in https://github.com/terok-ai/terok-executor/pull/555
+
+
+**Full Changelog**: https://github.com/terok-ai/terok-executor/compare/v0.4.0...v0.5.0
+
 ## v0.4.0 — Past Prologue
 
 ## What's Changed
