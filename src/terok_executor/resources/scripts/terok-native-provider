@@ -21,9 +21,9 @@ The launcher is invoked under the agent's name plus a ``-provider`` suffix
 (``codex-provider``, ``vibe-provider``) only when a provider is selected — an
 explicit ``--provider`` or the container's ``TEROK_PROVIDER``.  It resolves the
 override and execs the agent against that provider's vault endpoint.  With no
-selection the agent runs directly (the wrapper never invokes the launcher): its
-own config_patch already points its default provider at the vault, so the
-launcher is never in that path.  When the chosen provider does not serve the
+selection Codex still uses this launcher and its default vault provider. This
+avoids first-party workspace discovery, which requires HTTPS in Codex 0.157.
+Other native agents retain their direct default launch.  When the chosen provider does not serve the
 agent's protocol, the agent is launched unchanged on its default endpoint.
 
 The ACP adapters exec a different binary (``codex-acp``) than the agent, so
@@ -45,8 +45,10 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 _LAUNCHER_SUFFIX = "-provider"
 """Trailing fragment of the invoked command that names the launcher itself."""
@@ -72,7 +74,7 @@ def main(argv: list[str]) -> int:
         return _emit(argv[2:])
     agent = _resolve_agent(_invoked_agent(argv[0]))
     provider, agent_args = _split_provider_flag(argv[1:])
-    extra_args, extra_env = _override(agent, provider) if provider else ([], {})
+    extra_args, extra_env = _override(agent, provider)
     return _exec(agent.binary, [*extra_args, *agent_args], extra_env)
 
 
@@ -81,8 +83,8 @@ def _emit(args: list[str]) -> int:
 
     The ACP adapters exec their own binary (``codex-acp``) rather than the
     agent, so they read the override here and prepend it themselves.  The
-    provider is the container's ``TEROK_PROVIDER``; with none selected nothing is
-    emitted and the adapter routes through its config_patch'd default endpoint.
+    provider is the container's ``TEROK_PROVIDER``; with none selected Codex
+    uses its default vault provider, just like the interactive wrapper.
 
     Only the argv-form override is emitted (codex's ``-c`` flags); an env-only
     agent (vibe routes via the ``VIBE_PROVIDERS`` env) would yield nothing, which
@@ -90,9 +92,7 @@ def _emit(args: list[str]) -> int:
     """
     agent = _resolve_agent(args[0] if args else "")
     provider = os.environ.get(_PROVIDER_ENV)
-    if not provider:
-        return 0
-    extra_args, _ = _override(agent, provider)
+    extra_args, _ = _override(agent, provider or "")
     sys.stdout.write("\0".join(extra_args))
     return 0
 
@@ -137,6 +137,10 @@ def _override(agent: NativeAgent, provider: str) -> tuple[list[str], dict[str, s
     endpoint and a note is written to stderr.  Returns ``(extra_args, extra_env)``
     to prepend / overlay when exec'ing the agent.
     """
+    if not provider:
+        if agent.binary != "codex":
+            return [], {}
+        provider = "openai"
     key = provider.upper()
     proto = agent.protocol.upper().replace("-", "_")
     base_url = os.environ.get(f"TEROK_PROVIDER_{key}_BASE_{proto}")
@@ -146,9 +150,34 @@ def _override(agent: NativeAgent, provider: str) -> tuple[list[str], dict[str, s
             f"running {agent.binary} on its default endpoint.",
             file=sys.stderr,
         )
+        if agent.binary == "codex" and provider != "openai":
+            return _override(agent, "openai")
         return [], {}
+    if agent.binary == "codex" and provider == "openai":
+        base_url = _codex_vault_base(base_url)
     token_var = f"TEROK_PROVIDER_{key}_TOKEN"
     return agent.deliver(provider, base_url, token_var)
+
+
+def _codex_vault_base(fallback: str) -> str:
+    """Keep the credential-specific endpoint Terok wrote, without reading auth.
+
+    The protocol handle alone is /v1 even for subscription credentials. Only
+    accept a config endpoint on that same vault origin, never an upstream URL.
+    """
+    from urllib.parse import urlsplit
+
+    home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    try:
+        with (home / "config.toml").open("rb") as stream:
+            configured = tomllib.load(stream).get("openai_base_url")
+    except FileNotFoundError:
+        return fallback
+    if isinstance(configured, str):
+        candidate, vault = urlsplit(configured), urlsplit(fallback)
+        if (candidate.scheme, candidate.netloc) == (vault.scheme, vault.netloc):
+            return configured
+    return fallback
 
 
 # ── Per-agent override deliveries ─────────────────────────────────────────────

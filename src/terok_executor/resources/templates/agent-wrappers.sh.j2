@@ -52,11 +52,10 @@
         -h|--help) _terok_wrapper_help {{ c.binary }} "$_name" {{ c.help_flags | shquote }} "$@"; return $? ;;
     esac
 {%- if c.provider_launcher %}
-    # Route the agent.  With no provider selected it runs its binary verbatim;
-    # a selected provider (--provider, or the container's TEROK_PROVIDER) re-points
-    # it through {{ c.provider_launcher }}.  Natives need no launcher by default —
-    # their config_patch already aims their default provider at the vault.
-    local _runner=({{ c.binary }})
+    # Selected providers use the launcher; Codex also needs it by default
+    # to keep HTTP vault routing on the custom-provider authentication path.
+    {# Codex must use custom-provider auth even for its default vault route. #}
+    local _runner=({% if c.is_codex %}{{ c.provider_launcher }}{% else %}{{ c.binary }}{% endif %})
     [ -n "$_provider" ] && _runner=({{ c.provider_launcher }} --provider "$_provider")
 {%- endif %}
 {%- if c.readiness_guard %}
