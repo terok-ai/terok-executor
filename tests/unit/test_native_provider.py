@@ -110,8 +110,9 @@ def pp() -> ModuleType:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_provider_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Keep staged-script tests independent of the enclosing Terok task."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     for name in tuple(os.environ):
         if name in _PROVIDER_ENV_NAMES or name.startswith(_PROVIDER_ENV_PREFIXES):
             monkeypatch.delenv(name)
@@ -214,13 +215,7 @@ class TestArgumentResolution:
 
 
 class TestNoSelection:
-    """With no provider selected the launcher applies no override.
-
-    The agent then runs on its config_patch'd default endpoint (which already
-    points at the vault); the wrapper, in fact, never even invokes the launcher
-    in that case.  The launcher only re-points to an explicitly selected
-    *non-default* provider.
-    """
+    """Without an authenticated default handle there is no override to apply."""
 
     def test_registry_mirrors_roster_binding(self, np: ModuleType) -> None:
         """The hardcoded binary/protocol must not drift from the roster.
@@ -855,3 +850,57 @@ class TestOpencodeModelFetchFeedback:
         monkeypatch.setattr(ocp.subprocess, "call", lambda cmd, env=None: 0)
         assert ocp.main() == 0
         assert "Updating the model list from Helmholtz Blablador" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("suffix", ["/v1", "/backend-api/codex"])
+@pytest.mark.parametrize("selected", ["", "openai"])
+def test_codex_default_keeps_credential_endpoint(
+    np: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suffix: str, selected: str
+) -> None:
+    """Default and explicit OpenAI use phantom auth on the credential-specific route."""
+    monkeypatch.setenv("TEROK_PROVIDER_OPENAI_BASE_OPENAI_RESPONSES", _OPENAI_RESPONSES_BASE)
+    config = tmp_path / "config.toml"
+    original = f'openai_base_url = "{_LOOPBACK}{suffix}"\n'
+    config.write_text(original)
+    args, _ = np._override(np._NATIVE_AGENTS["codex"], selected)
+    settings = _c_settings(args)
+    assert settings["model_provider"] == '"terok-openai"'
+    assert settings["model_providers.terok-openai.base_url"] == f'"{_LOOPBACK}{suffix}"'
+    assert settings["model_providers.terok-openai.env_key"] == '"TEROK_PROVIDER_OPENAI_TOKEN"'
+    assert config.read_text() == original
+
+
+def test_codex_default_emit_matches_interactive(
+    np: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ACP and interactive launches use the same default custom provider."""
+    monkeypatch.setenv("TEROK_PROVIDER_OPENAI_BASE_OPENAI_RESPONSES", _OPENAI_RESPONSES_BASE)
+    launched = []
+    monkeypatch.setattr(np, "_exec", lambda binary, args, env: launched.extend(args) or 0)
+    np.main(["codex-provider"])
+    np._emit(["codex"])
+    assert capsys.readouterr().out.split("\0") == launched
+    assert _c_settings(launched)["model_provider"] == '"terok-openai"'
+
+
+def test_codex_never_uses_direct_upstream_config(np: ModuleType, tmp_path: Path) -> None:
+    """An old user override cannot take inference outside the vault."""
+    (tmp_path / "config.toml").write_text('openai_base_url = "https://api.openai.com/v1"\n')
+    assert np._codex_vault_base(_OPENAI_RESPONSES_BASE) == _OPENAI_RESPONSES_BASE
+
+
+def test_codex_wrapper_launches_default_through_provider() -> None:
+    """The default interactive path must reach the same launcher as selection."""
+    from terok_executor.provider.providers import AGENTS
+    from terok_executor.provider.wrappers import generate_agent_wrapper
+
+    assert "local _runner=(codex-provider)" in generate_agent_wrapper(AGENTS["codex"])
+
+
+def test_unserved_codex_selection_keeps_default_custom_auth(
+    np: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falling back from an unavailable provider must not restore first-party auth."""
+    monkeypatch.setenv("TEROK_PROVIDER_OPENAI_BASE_OPENAI_RESPONSES", _OPENAI_RESPONSES_BASE)
+    args, _ = np._override(np._NATIVE_AGENTS["codex"], "unavailable")
+    assert _c_settings(args)["model_provider"] == '"terok-openai"'

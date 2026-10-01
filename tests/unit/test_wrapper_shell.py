@@ -215,21 +215,21 @@ class TestSubcommandResume:
 
     def test_interactive_leads_with_resume(self, harness: Harness) -> None:
         """No arguments + recorded session → ``codex resume <id>``."""
-        harness.stub("codex")
+        harness.stub("codex-provider")
         harness.session("codex-session.txt", "abc")
         assert harness.run("codex").returncode == 0
         assert harness.calls == ["ARGV:resume abc"]
 
     def test_headless_nests_under_exec(self, harness: Harness) -> None:
         """``--terok-timeout … exec <prompt>`` → ``codex exec resume <id> <prompt>``."""
-        harness.stub("codex")
+        harness.stub("codex-provider")
         harness.session("codex-session.txt", "abc")
         assert harness.run("codex", "--terok-timeout", "5", "exec", "do it").returncode == 0
         assert harness.calls == ["ARGV:exec resume abc do it"]
 
     def test_new_session_flag_and_hint(self, harness: Harness) -> None:
         """The shared flag and hint apply to the subcommand form as well."""
-        harness.stub("codex")
+        harness.stub("codex-provider")
         harness.session("codex-session.txt", "abc")
         assert harness.run("codex", "--terok-new-session").returncode == 0
         result = harness.run("codex", rc=3)

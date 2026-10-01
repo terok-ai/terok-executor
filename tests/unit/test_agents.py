@@ -112,13 +112,12 @@ class TestRuntimeProviderWrappers:
         assert 'export ANTHROPIC_BASE_URL="$_prov_base"' in wrapper
         assert 'export CLAUDE_CODE_OAUTH_TOKEN="$_prov_token"' in wrapper
 
-    def test_codex_runs_bare_until_a_provider_is_selected(self) -> None:
-        """Codex runs its binary by default (its config_patch routes the default);
-        a selected provider re-points it through codex-provider."""
+    def test_codex_always_uses_provider_launcher(self) -> None:
+        """Default and selected Codex routes use custom-provider authentication."""
         wrapper = generate_agent_wrapper(AGENTS["codex"])
         assert 'local _provider="${TEROK_PROVIDER:-}"' in wrapper
-        assert "_runner=(codex)" in wrapper
-        assert "_runner=(codex-provider)" not in wrapper
+        assert "_runner=(codex)" not in wrapper
+        assert "_runner=(codex-provider)" in wrapper
         assert '_runner=(codex-provider --provider "$_provider")' in wrapper
 
     def test_vibe_runs_bare_until_a_provider_is_selected(self) -> None:
